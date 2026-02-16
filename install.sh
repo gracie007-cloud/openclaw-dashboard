@@ -65,12 +65,30 @@ DASHBOARD_PORT="${DASHBOARD_PORT:-7000}"
 read -p "Dashboard port (default: $DASHBOARD_PORT): " input
 DASHBOARD_PORT="${input:-$DASHBOARD_PORT}"
 
+# Token setup
+if [ -z "$DASHBOARD_TOKEN" ]; then
+  echo ""
+  echo "🔐 Authentication Setup"
+  echo "  A token is required to access the dashboard."
+  echo "  Leave blank to auto-generate a random 32-char token."
+  read -p "Dashboard token (leave blank for auto): " input
+  if [ -n "$input" ]; then
+    DASHBOARD_TOKEN="$input"
+    echo "✅ Using provided token"
+  else
+    DASHBOARD_TOKEN=$(openssl rand -hex 16 2>/dev/null || node -e "console.log(require('crypto').randomBytes(16).toString('hex'))")
+    echo "✅ Auto-generated token: $DASHBOARD_TOKEN"
+    echo "   ⚠️  Save this token! You'll need it to log in."
+  fi
+fi
+
 echo ""
 echo "📋 Installation Summary"
 echo "----------------------"
 echo "Workspace:     $WORKSPACE_DIR"
 echo "OpenClaw Dir:  $OPENCLAW_DIR"
 echo "Port:          $DASHBOARD_PORT"
+echo "Token:         ${DASHBOARD_TOKEN:0:8}..."
 echo "Install Dir:   $(pwd)"
 echo ""
 
@@ -95,6 +113,7 @@ User=$USER
 WorkingDirectory=$(pwd)
 ExecStart=$(which node) $(pwd)/server.js
 Environment=DASHBOARD_PORT=$DASHBOARD_PORT
+Environment=DASHBOARD_TOKEN=$DASHBOARD_TOKEN
 Environment=WORKSPACE_DIR=$WORKSPACE_DIR
 Environment=OPENCLAW_DIR=$OPENCLAW_DIR
 Restart=always
@@ -134,6 +153,9 @@ if sudo systemctl is-active --quiet agent-dashboard; then
   echo "Dashboard is running at:"
   echo "  → http://localhost:$DASHBOARD_PORT"
   echo "  → http://$(hostname -I | awk '{print $1}'):$DASHBOARD_PORT"
+  echo ""
+  echo "🔐 Login token: $DASHBOARD_TOKEN"
+  echo "   To enable MFA: Log in → Security page → Enable MFA"
   echo ""
   echo "Useful commands:"
   echo "  sudo systemctl status agent-dashboard   # Check status"

@@ -36,7 +36,11 @@ A beautiful, real-time monitoring dashboard for OpenClaw agents. Track sessions,
 - 📈 **Health History** - 24-hour CPU & RAM sparklines
 - 🎯 **Quick Actions** - One-click system maintenance (updates, cleanup, restarts)
 - 🍎 **macOS Compatible** - Full support for macOS system stats, services, and memory reporting
-- 🔐 **No External Dependencies** - Pure Node.js, no database required
+- 🔐 **Token Authentication** - Secure token-based login with rate limiting and lockout
+- 🔑 **TOTP MFA** - Optional two-factor authentication (Google Authenticator compatible)
+- 💾 **Remember Me** - Session-only or 3-hour persistent login
+- 🛡️ **Security Hardened** - HSTS, CSP, timing-safe comparisons, audit logging
+- 📦 **No External Dependencies** - Pure Node.js, no database required
 
 ## 🚀 Quick Install
 
@@ -53,23 +57,41 @@ node server.js
 
 Visit `http://localhost:7000` in your browser.
 
-## ⚠️ Security Warning
+## 🔐 Authentication & Security
 
-**This dashboard is designed for local network or Tailscale use only. Do not expose it to the public internet.**
+The dashboard includes built-in authentication and security hardening:
 
-The dashboard provides direct access to system logs, service controls, file browsing, and command execution endpoints. There is no authentication layer built in. Running it on a public-facing port could allow anyone to read your agent memory, restart services, or view sensitive session data.
+### Token Authentication
+```bash
+# Auto-generate token (printed to console on startup)
+node server.js
 
-**Safe usage:**
-- Access via `localhost` on the same machine
-- Access via your local LAN (e.g. `192.168.x.x:7000`)
-- Access via [Tailscale](https://tailscale.com/) or another private VPN/overlay network
+# Use a custom token
+DASHBOARD_TOKEN=your_secret_token node server.js
+```
 
-**Do not:**
-- Port-forward the dashboard to the internet
-- Expose it through a reverse proxy without adding authentication (e.g. Authelia, Authentik, basic auth)
-- Run it on a public VPS without a firewall restricting access to the dashboard port
+All API endpoints require authentication via `Authorization: Bearer <token>` header or `?token=<token>` query param. Static pages (login) are served without auth.
 
-If you need remote access, use Tailscale or set up a reverse proxy with proper authentication in front of it.
+### TOTP MFA (Optional)
+Enable two-factor authentication with any TOTP-compatible app (Google Authenticator, Authy, etc.):
+1. Log in → Navigate to **Security** page
+2. Click **Enable MFA** → Scan QR code with your authenticator app
+3. Future logins require both token + 6-digit TOTP code
+
+### Security Features
+- **Rate limiting** — 5 failed attempts → soft lockout, 20 → hard lockout (15 min)
+- **Timing-safe token comparison** — Prevents timing attacks
+- **Security headers** — HSTS, CSP, X-Frame-Options, X-Content-Type-Options
+- **Audit logging** — All auth events and destructive actions logged to `data/audit.log`
+- **Session management** — Remember me (3h) or session-only storage
+- **CORS** — Same-origin only, no wildcard
+
+### ⚠️ Network Security
+
+While the dashboard now has built-in authentication, we still recommend:
+- Access via `localhost`, LAN, or [Tailscale](https://tailscale.com/)
+- Use HTTPS (Tailscale provides this automatically)
+- Don't expose to the public internet without additional protection
 
 ## 📦 Manual Install
 
