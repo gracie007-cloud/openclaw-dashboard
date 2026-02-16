@@ -255,14 +255,19 @@ function isLocalhost(ip) {
   return ip === '127.0.0.1' || ip === '::1' || ip === '::ffff:127.0.0.1';
 }
 
+function isTailscaleIP(ip) {
+  const clean = ip.replace('::ffff:', '');
+  return clean.startsWith('100.') && parseInt(clean.split('.')[1]) >= 64 && parseInt(clean.split('.')[1]) <= 127;
+}
+
 function httpsEnforcement(req, res) {
   if (process.env.DASHBOARD_ALLOW_HTTP === 'true') return true;
   const ip = getClientIP(req);
-  if (isLocalhost(ip)) return true;
+  if (isLocalhost(ip) || isTailscaleIP(ip)) return true;
   if (req.socket.encrypted || req.headers['x-forwarded-proto'] === 'https') return true;
   setSecurityHeaders(res);
   res.writeHead(403, { 'Content-Type': 'text/plain' });
-  res.end('HTTPS required. Access via localhost or enable HTTPS.');
+  res.end('HTTPS required. Access via localhost, Tailscale, or enable HTTPS.');
   return false;
 }
 

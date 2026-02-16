@@ -4,7 +4,7 @@
 [![Node.js](https://img.shields.io/badge/Node.js-v18+-green.svg)](https://nodejs.org/)
 [![OpenClaw](https://img.shields.io/badge/OpenClaw-Compatible-purple.svg)](https://openclaw.dev)
 
-A beautiful, real-time monitoring dashboard for OpenClaw agents. Track sessions, monitor API usage, view costs, manage memory files, and keep tabs on system health — all in one place.
+A beautiful, secure, real-time monitoring dashboard for OpenClaw agents. Track sessions, monitor API usage, view costs, manage memory files, and keep tabs on system health — all in one place.
 
 ![Dashboard Preview](docs/screenshot.png)
 
@@ -25,7 +25,7 @@ A beautiful, real-time monitoring dashboard for OpenClaw agents. Track sessions,
 - 🔥 **Streak Tracking** - Monitor daily activity streaks
 - 🔍 **Session Search & Filtering** - Filter by status, model, date range with live search
 - 🎨 **Dark Theme** - Beautiful glassmorphic UI with smooth animations
-- ⌨️ **Keyboard Shortcuts** - Navigate quickly with hotkeys (1-5, Space, /, Esc, ?)
+- ⌨️ **Keyboard Shortcuts** - Navigate quickly with hotkeys (1-7, Space, /, Esc, ?)
 - 📱 **Mobile Responsive** - Works on phones and tablets
 - 🔔 **Browser Notifications** - Get alerted when usage limits are approaching
 - 📊 **Timeline View** - Visual timeline of session activity
@@ -36,72 +36,37 @@ A beautiful, real-time monitoring dashboard for OpenClaw agents. Track sessions,
 - 📈 **Health History** - 24-hour CPU & RAM sparklines
 - 🎯 **Quick Actions** - One-click system maintenance (updates, cleanup, restarts)
 - 🍎 **macOS Compatible** - Full support for macOS system stats, services, and memory reporting
-- 🔐 **Token Authentication** - Secure token-based login with rate limiting and lockout
+- 🔐 **Username/Password Auth** - Secure registration with PBKDF2 password hashing
 - 🔑 **TOTP MFA** - Optional two-factor authentication (Google Authenticator compatible)
 - 💾 **Remember Me** - Session-only or 3-hour persistent login
-- 🛡️ **Security Hardened** - HSTS, CSP, timing-safe comparisons, audit logging
+- 🛡️ **Security Hardened** - HSTS, CSP, rate limiting, timing-safe comparisons, audit logging
 - 📦 **No External Dependencies** - Pure Node.js, no database required
 
-## 🚀 Quick Install
+## 🚀 Quick Start
 
 ```bash
+# Clone the repository
 git clone https://github.com/tugcantopaloglu/openclaw-dashboard.git
 cd openclaw-dashboard
 
-# Auto-detect workspace or set explicitly
+# Set your OpenClaw workspace path (optional, auto-detects if not set)
 export WORKSPACE_DIR=/path/to/your/openclaw/workspace
 
 # Start the dashboard
 node server.js
 ```
 
-Visit `http://localhost:7000` in your browser.
+Visit `http://localhost:7000` in your browser. On first visit, you'll see a **registration screen** where you create your username and password. After registration, log in with your credentials.
 
-## 🔐 Authentication & Security
-
-The dashboard includes built-in authentication and security hardening:
-
-### Token Authentication
-```bash
-# Auto-generate token (printed to console on startup)
-node server.js
-
-# Use a custom token
-DASHBOARD_TOKEN=your_secret_token node server.js
-```
-
-All API endpoints require authentication via `Authorization: Bearer <token>` header or `?token=<token>` query param. Static pages (login) are served without auth.
-
-### TOTP MFA (Optional)
-Enable two-factor authentication with any TOTP-compatible app (Google Authenticator, Authy, etc.):
-1. Log in → Navigate to **Security** page
-2. Click **Enable MFA** → Scan QR code with your authenticator app
-3. Future logins require both token + 6-digit TOTP code
-
-### Security Features
-- **Rate limiting** — 5 failed attempts → soft lockout, 20 → hard lockout (15 min)
-- **Timing-safe token comparison** — Prevents timing attacks
-- **Security headers** — HSTS, CSP, X-Frame-Options, X-Content-Type-Options
-- **Audit logging** — All auth events and destructive actions logged to `data/audit.log`
-- **Session management** — Remember me (3h) or session-only storage
-- **CORS** — Same-origin only, no wildcard
-
-### ⚠️ Network Security
-
-While the dashboard now has built-in authentication, we still recommend:
-- Access via `localhost`, LAN, or [Tailscale](https://tailscale.com/)
-- Use HTTPS (Tailscale provides this automatically)
-- Don't expose to the public internet without additional protection
-
-## 📦 Manual Install
+## 📦 Installation
 
 ### Prerequisites
 
-- **Node.js** v18+ (check with `node --version`)
+- **Node.js** v18 or higher (check with `node --version`)
 - **OpenClaw** installed and running
-- **Systemd** (optional, for service installation)
+- **Systemd** (optional, for service installation on Linux)
 
-### Installation Steps
+### Manual Install
 
 1. **Clone the repository**
    ```bash
@@ -122,30 +87,402 @@ While the dashboard now has built-in authentication, we still recommend:
    node server.js
    ```
 
+   The server will print:
+   ```
+   🚀 Dashboard running on http://localhost:7000
+   🔑 Recovery token: abc123def456...
+   ```
+
+   **Save the recovery token** — you'll need it if you forget your password.
+
 4. **Access the dashboard**
-   Open `http://localhost:7000` or `http://your-server-ip:7000`
+   Open `http://localhost:7000` and register your account.
 
-## ⚙️ Configuration
+### Systemd Service (install.sh)
 
-All configuration is done via environment variables:
-
-| Variable | Default | Description |
-|----------|---------|-------------|
-| `DASHBOARD_PORT` | `7000` | Port the dashboard listens on |
-| `WORKSPACE_DIR` | `$OPENCLAW_WORKSPACE` or `$(pwd)` | Path to your OpenClaw workspace |
-| `OPENCLAW_DIR` | `$HOME/.openclaw` | OpenClaw data directory |
-| `OPENCLAW_AGENT` | `main` | Agent ID to monitor |
-
-### Example: Custom Port
+To run the dashboard as a system service with auto-start and crash recovery:
 
 ```bash
-DASHBOARD_PORT=8080 node server.js
+sudo ./install.sh
 ```
 
-### Example: Different Workspace
+This will:
+- Create `/etc/systemd/system/agent-dashboard.service`
+- Create override config at `/etc/systemd/system/agent-dashboard.service.d/override.conf`
+- Enable and start the service
+- Set your workspace path and generate a recovery token
+
+View logs:
+```bash
+journalctl -u agent-dashboard -f
+```
+
+### Environment Variables
+
+| Variable | Description | Default |
+|----------|-------------|---------|
+| `DASHBOARD_PORT` | Server port | `7000` |
+| `DASHBOARD_TOKEN` | Recovery token for password reset | Auto-generated on startup |
+| `WORKSPACE_DIR` | OpenClaw workspace path | `$OPENCLAW_WORKSPACE` or current directory |
+| `OPENCLAW_DIR` | OpenClaw config directory | `~/.openclaw` |
+| `OPENCLAW_AGENT` | Agent ID to monitor | `main` |
+| `DASHBOARD_ALLOW_HTTP` | Allow HTTP from non-local IPs | `false` |
+
+**Examples:**
 
 ```bash
-WORKSPACE_DIR=/mnt/data/my-openclaw node server.js
+# Custom port
+DASHBOARD_PORT=8080 node server.js
+
+# Custom recovery token
+DASHBOARD_TOKEN=my_secret_token_12345 node server.js
+
+# Different workspace
+WORKSPACE_DIR=/mnt/data/openclaw node server.js
+```
+
+## 🔐 Authentication
+
+The dashboard uses **username and password authentication** with secure server-side sessions.
+
+### First-Time Registration
+
+1. Visit the dashboard URL (e.g., `http://localhost:7000`)
+2. You'll see a registration screen
+3. Choose a username and password
+4. Click **Register**
+5. Log in with your new credentials
+
+### Login
+
+- Enter your **username** and **password**
+- Optionally check **"Remember me"** to stay logged in for 3 hours (uses `localStorage`)
+- Without "Remember me", your session lasts only until you close the browser (uses `sessionStorage`)
+
+### Password Security
+
+- **PBKDF2 hashing** — 100,000 iterations with SHA-512
+- **Random salt** — Unique per password
+- **Server-side sessions** — Passwords never stored in browser, only session tokens
+- **Timing-safe comparisons** — Prevents timing attacks on password verification
+
+### Rate Limiting
+
+To prevent brute-force attacks:
+- **5 failed login attempts** → 15-minute soft lockout
+- **20 failed login attempts** → Hard lockout (requires service restart)
+- Rate limits are in-memory and reset when the service restarts
+
+## 🔑 Multi-Factor Authentication (MFA)
+
+Add an extra layer of security with time-based one-time passwords (TOTP).
+
+### Enabling MFA
+
+1. **Log in** to the dashboard
+2. Go to the **Security** page (sidebar)
+3. Click **"Enable MFA"**
+4. A **QR code** appears — scan it with your authenticator app:
+   - Google Authenticator (iOS, Android)
+   - Authy (iOS, Android, Desktop)
+   - Microsoft Authenticator (iOS, Android)
+   - 1Password, Bitwarden, or any TOTP-compatible app
+5. Enter the **6-digit code** shown in your app to verify
+6. MFA is now active! 🎉
+
+### Using MFA
+
+Once enabled, every login requires:
+1. Your **username** and **password** (as usual)
+2. A **6-digit TOTP code** from your authenticator app
+
+- Codes refresh every **30 seconds**
+- The dashboard accepts codes with **±1 window tolerance** for clock drift (30 seconds before/after)
+
+### Disabling MFA
+
+1. Go to the **Security** page
+2. Click **"Disable MFA"**
+3. Enter your current **6-digit TOTP code** to confirm
+4. MFA is now disabled
+
+### Resetting MFA (if locked out)
+
+If you lose access to your authenticator app (lost phone, uninstalled app, etc.):
+
+1. **SSH into your server**
+2. **Run this command** to clear the MFA secret:
+   ```bash
+   node -e "const fs=require('fs');const c=JSON.parse(fs.readFileSync('/root/clawd/data/credentials.json','utf8'));delete c.mfaSecret;fs.writeFileSync('/root/clawd/data/credentials.json',JSON.stringify(c,null,2));console.log('MFA cleared')"
+   ```
+3. **Restart the dashboard**:
+   ```bash
+   systemctl restart agent-dashboard
+   ```
+4. Log in with just your **username** and **password**
+5. Re-enable MFA with a new QR code
+
+**Important:** Adjust the path `/root/clawd/data/credentials.json` if your workspace is elsewhere.
+
+## 🔓 Password Recovery
+
+### Forgot Password?
+
+If you forget your password:
+
+1. Click **"Forgot password?"** on the login screen
+2. Enter your **recovery token** (see "Finding Your Recovery Token" below)
+3. Set a **new password**
+4. Log in with your new password
+
+### Finding Your Recovery Token
+
+The recovery token (`DASHBOARD_TOKEN`) is printed when the server starts. You can find it in several places:
+
+#### Check Server Startup Logs
+```bash
+journalctl -u agent-dashboard | grep "Recovery token"
+```
+
+Output:
+```
+🔑 Recovery token: 3e6b91f352418b486a9aa9d82fbbc1b1
+```
+
+#### Check Systemd Override Config
+```bash
+cat /etc/systemd/system/agent-dashboard.service.d/override.conf
+```
+
+Look for:
+```ini
+Environment=DASHBOARD_TOKEN=3e6b91f352418b486a9aa9d82fbbc1b1
+```
+
+#### Check Environment Variable
+If you set it manually:
+```bash
+echo $DASHBOARD_TOKEN
+```
+
+### Changing Your Password
+
+To change your password while logged in:
+
+1. Go to the **Security** page
+2. Enter your **current password**
+3. Enter your **new password**
+4. Click **"Change Password"**
+5. All other sessions are invalidated (you'll need to log in again elsewhere)
+
+### Complete Account Reset (Nuclear Option)
+
+If everything is locked and you can't log in:
+
+1. **SSH into your server**
+2. **Delete the credentials file**:
+   ```bash
+   rm /root/clawd/data/credentials.json
+   ```
+3. **Restart the dashboard**:
+   ```bash
+   systemctl restart agent-dashboard
+   ```
+4. **Visit the dashboard** — the registration screen appears
+5. **Create a new account** from scratch
+
+**Warning:** This deletes your username, password, and MFA settings. Memory files and audit logs are not affected.
+
+## 🛡️ Security Features
+
+The dashboard is built with security best practices:
+
+- **PBKDF2 password hashing** — 100,000 iterations, SHA-512, random salt
+- **Timing-safe comparisons** — Prevents timing attacks on token/password verification
+- **Server-side sessions** — Session tokens stored in memory, passwords never sent to browser
+- **Rate limiting** — Unified rate limiter for login attempts (5 soft / 20 hard lockout)
+- **HTTPS enforcement** — HTTP blocked except from localhost and Tailscale (100.64.0.0/10)
+- **Security headers**:
+  - **HSTS** — Force HTTPS on future visits
+  - **CSP** — Content Security Policy (no inline scripts, same-origin)
+  - **X-Frame-Options: DENY** — Prevent clickjacking
+  - **X-Content-Type-Options: nosniff** — Prevent MIME sniffing
+  - **X-XSS-Protection: 1; mode=block** — Legacy XSS protection
+- **Audit logging** — All auth events and destructive actions logged to `data/audit.log`
+- **CORS** — Same-origin only, no wildcard (`*`) allowed
+- **Input validation**:
+  - Service whitelist for logs and actions
+  - Path traversal protection for file access
+  - Payload size limits (1MB max)
+- **Automatic backups** — `.bak` files created before overwriting workspace files
+
+## 🌐 Network Security
+
+The dashboard is designed for **local or Tailscale access**:
+
+### Recommended Access Methods
+
+1. **Localhost** — Access from the same machine: `http://localhost:7000`
+2. **Tailscale** — Access from your Tailscale network: `http://100.x.x.x:7000`
+   - Tailscale provides **automatic TLS encryption** (MagicDNS + HTTPS)
+   - Tailscale IPs (100.64.0.0 to 100.127.255.255) are exempt from HTTPS enforcement
+3. **Local network** — Access from LAN (use HTTPS or set `DASHBOARD_ALLOW_HTTP=true`)
+
+### HTTPS Enforcement
+
+By default, the dashboard **blocks HTTP access** from non-local IPs. Exemptions:
+- **Localhost** (127.0.0.1, ::1)
+- **Tailscale IPs** (100.64.0.0/10)
+
+For other networks, the dashboard requires HTTPS or the `X-Forwarded-Proto: https` header (from a reverse proxy).
+
+To allow HTTP from all IPs (not recommended):
+```bash
+DASHBOARD_ALLOW_HTTP=true node server.js
+```
+
+### Don't Expose to Public Internet
+
+**This dashboard is NOT hardened for public internet exposure.** While it has authentication and rate limiting, it's designed for private networks. If you must expose it:
+- Use a reverse proxy (nginx, Caddy) with HTTPS
+- Add IP allowlisting
+- Consider VPN (Tailscale, WireGuard) instead
+
+## 🛠️ Troubleshooting
+
+### "Too many failed attempts"
+
+**Problem:** You see "Too many failed login attempts. Please try again later."
+
+**Solutions:**
+- Wait **15 minutes** for the soft lockout to expire
+- Restart the service to clear rate limits:
+  ```bash
+  systemctl restart agent-dashboard
+  ```
+- Rate limits are in-memory and reset on restart
+
+### Can't log in after password change
+
+**Problem:** Your password was changed but you can't log in.
+
+**Solution:** Use the **"Forgot password?"** flow with your recovery token to set a new password.
+
+### MFA code not working
+
+**Problem:** The 6-digit TOTP code is rejected.
+
+**Solutions:**
+- Ensure your **phone's clock is synchronized**:
+  - iOS: Settings → General → Date & Time → Set Automatically
+  - Android: Settings → System → Date & Time → Automatic date & time
+- TOTP codes have **±30 second tolerance** for clock drift
+- Try entering the **next code** (wait 30 seconds for it to refresh)
+- If still failing, **reset MFA via SSH** (see "Resetting MFA" section)
+
+### Dashboard not loading
+
+**Problem:** Browser shows a blank page or connection error.
+
+**Solutions:**
+1. **Check service status**:
+   ```bash
+   systemctl status agent-dashboard
+   ```
+2. **Check logs**:
+   ```bash
+   journalctl -u agent-dashboard -n 50
+   ```
+3. **Verify port**:
+   ```bash
+   curl http://localhost:7000/api/auth/status
+   ```
+   Should return:
+   ```json
+   {"authenticated": false, "requiresRegistration": false}
+   ```
+
+### "HTTPS required" error
+
+**Problem:** Browser shows "HTTPS required. Access via localhost, Tailscale, or enable HTTPS."
+
+**Solutions:**
+- Access via **localhost**: `http://localhost:7000`
+- Access via **Tailscale**: `http://100.x.x.x:7000`
+- Set `DASHBOARD_ALLOW_HTTP=true` in environment (not recommended):
+  ```bash
+  # Add to /etc/systemd/system/agent-dashboard.service.d/override.conf
+  Environment=DASHBOARD_ALLOW_HTTP=true
+  
+  # Reload and restart
+  systemctl daemon-reload
+  systemctl restart agent-dashboard
+  ```
+
+### Blank page after update
+
+**Problem:** Dashboard shows a blank page after pulling new code.
+
+**Solutions:**
+- **Hard refresh**: `Ctrl+Shift+R` (Windows/Linux) or `Cmd+Shift+R` (macOS)
+- **Clear browser cache** for the dashboard URL
+- **Check browser console** (F12 → Console tab) for JavaScript errors
+
+## 📡 API Reference
+
+The dashboard exposes a REST API for programmatic access. All endpoints require authentication via `Authorization: Bearer <sessionToken>` header.
+
+### Unauthenticated Endpoints
+
+- `GET /api/auth/status` — Check authentication status
+- `POST /api/auth/login` — Log in with username/password (+ TOTP if MFA enabled)
+- `POST /api/auth/register` — Register a new account (only if no credentials exist)
+- `POST /api/auth/reset-password` — Reset password with recovery token
+
+### Authenticated Endpoints
+
+All other endpoints require authentication:
+
+- `GET /api/config` — Dashboard configuration
+- `GET /api/sessions` — List all agent sessions
+- `GET /api/usage` — 5-hour rolling window usage data
+- `GET /api/costs` — Spending data by day, model, and session
+- `GET /api/system` — System health metrics
+- `GET /api/memory-files` — List memory files
+- `GET /api/memory-file?path=<path>` — Read a memory file
+- `GET /api/key-files` — List workspace files (skills, configs)
+- `GET /api/key-file?path=<name>` — Read a workspace file
+- `POST /api/key-file` — Write to a workspace file (with backup)
+- `GET /api/crons` — List cron jobs
+- `POST /api/cron/<id>/toggle` — Enable/disable a cron job
+- `POST /api/cron/<id>/run` — Manually trigger a cron job
+- `GET /api/logs?service=<service>&lines=<N>` — Fetch system logs
+- `POST /api/action/<action>` — Run quick actions (restart-openclaw, restart-dashboard, etc.)
+- `POST /api/claude-usage-scrape` — Trigger usage scrape
+- `GET /api/claude-usage` — Get last scraped usage
+- `GET /api/live` — Server-Sent Events stream of real-time messages
+
+For detailed request/response examples, see the previous version of this README or explore the API in the browser's Network tab.
+
+## 📂 Data Files
+
+The dashboard stores data in your workspace directory:
+
+| File | Purpose |
+|------|---------|
+| `data/credentials.json` | Username + hashed password + MFA secret |
+| `data/audit.log` | Security audit trail (auto-rotates at 10MB) |
+| `data/health-history.json` | CPU/RAM history for sparklines |
+| `data/claude-usage.json` | Last scraped Claude usage data |
+
+**Credentials file structure:**
+```json
+{
+  "username": "admin",
+  "passwordHash": "pbkdf2_sha512$100000$...",
+  "salt": "...",
+  "mfaSecret": "BASE32SECRET..." // Only if MFA enabled
+}
 ```
 
 ## 🔗 OpenClaw Integration
@@ -166,250 +503,6 @@ The dashboard works best when these files exist:
 - `$WORKSPACE_DIR/scripts/scrape-claude-usage.sh` - Claude usage scraper
 - `$WORKSPACE_DIR/scripts/parse-claude-usage.py` - Usage parser
 
-## 🛠️ Systemd Service
-
-Run the dashboard as a system service for auto-start and crash recovery.
-
-### Create Service File
-
-```bash
-sudo nano /etc/systemd/system/agent-dashboard.service
-```
-
-Paste this content:
-
-```ini
-[Unit]
-Description=OpenClaw Agent Dashboard
-After=network.target openclaw.service
-
-[Service]
-Type=simple
-User=your-username
-WorkingDirectory=/path/to/openclaw-dashboard
-ExecStart=/usr/bin/node /path/to/openclaw-dashboard/server.js
-Environment=DASHBOARD_PORT=7000
-Environment=WORKSPACE_DIR=/path/to/your/openclaw/workspace
-Environment=OPENCLAW_DIR=/home/your-username/.openclaw
-Restart=always
-RestartSec=5
-
-[Install]
-WantedBy=multi-user.target
-```
-
-### Enable and Start
-
-```bash
-sudo systemctl daemon-reload
-sudo systemctl enable agent-dashboard
-sudo systemctl start agent-dashboard
-sudo systemctl status agent-dashboard
-```
-
-### View Logs
-
-```bash
-journalctl -u agent-dashboard -f
-```
-
-## 📊 Usage Scraping
-
-The dashboard can scrape real usage data from the Claude Code CLI.
-
-### How It Works
-
-1. Opens a persistent tmux session named `claude-persistent`
-2. Runs `claude` CLI and sends `/usage` command
-3. Captures the output and parses usage percentages
-4. Saves to `$WORKSPACE_DIR/data/claude-usage.json`
-
-### Manual Scrape
-
-```bash
-cd $WORKSPACE_DIR
-bash scripts/scrape-claude-usage.sh
-```
-
-### Auto-Refresh
-
-Enable the "Auto" toggle in the Overview page to scrape every 2 minutes.
-
-### Requirements
-
-- `tmux` installed
-- `claude` CLI authenticated
-- `scripts/scrape-claude-usage.sh` executable
-- `scripts/parse-claude-usage.py` available
-
-## 🔌 API Reference
-
-The dashboard exposes a REST API for programmatic access.
-
-### Core Endpoints
-
-#### `GET /api/config`
-Returns dashboard configuration.
-
-**Response:**
-```json
-{
-  "name": "OpenClaw Dashboard",
-  "version": "1.0.0"
-}
-```
-
-#### `GET /api/sessions`
-List all agent sessions with metadata.
-
-**Response:**
-```json
-[
-  {
-    "key": "agent:main:main",
-    "label": "main",
-    "model": "anthropic/claude-opus-4-6",
-    "totalTokens": 125000,
-    "cost": 1.87,
-    "kind": "direct",
-    "updatedAt": 1707561234567,
-    "createdAt": 1707550000000,
-    "aborted": false,
-    "lastMessage": "Updated server.js successfully"
-  }
-]
-```
-
-#### `GET /api/usage`
-Get 5-hour rolling window usage data.
-
-**Response:**
-```json
-{
-  "fiveHour": {
-    "perModel": {
-      "anthropic/claude-opus-4-6": {
-        "input": 50000,
-        "output": 12000,
-        "cost": 0.245,
-        "calls": 15
-      }
-    },
-    "windowStart": 1707561234567,
-    "windowResetIn": 14400000
-  },
-  "burnRate": {
-    "tokensPerMinute": 250.5,
-    "costPerMinute": 0.0125
-  },
-  "predictions": {
-    "timeToLimit": 7200000,
-    "safe": true
-  }
-}
-```
-
-#### `GET /api/costs`
-Get spending data by day, model, and session.
-
-**Response:**
-```json
-{
-  "total": 45.67,
-  "today": 2.34,
-  "week": 12.89,
-  "perDay": {
-    "2024-02-10": 2.34,
-    "2024-02-09": 3.45
-  },
-  "perModel": {
-    "anthropic/claude-opus-4-6": 35.12,
-    "anthropic/claude-sonnet-4-5": 10.55
-  }
-}
-```
-
-#### `GET /api/system`
-System health metrics.
-
-**Response:**
-```json
-{
-  "cpu": { "usage": 35, "temp": 52.0 },
-  "memory": { "total": 8589934592, "used": 4294967296, "percent": 50 },
-  "disk": { "percent": 45, "used": "180G", "total": "400G" },
-  "uptime": 864000,
-  "crashCount": 0
-}
-```
-
-### Session Management
-
-#### `GET /api/session-messages?id=<sessionId>`
-Get recent messages from a session (last 30).
-
-#### `GET /api/crons`
-List all cron jobs.
-
-#### `POST /api/cron/<id>/toggle`
-Enable/disable a cron job.
-
-#### `POST /api/cron/<id>/run`
-Manually trigger a cron job.
-
-### Memory & Logs
-
-#### `GET /api/memory-files`
-List all memory files with metadata.
-
-#### `GET /api/memory-file?path=<path>`
-Read content of a memory file.
-
-#### `GET /api/key-files`
-List workspace files (AGENTS.md, SOUL.md, skills, configs) with metadata.
-
-#### `GET /api/key-file?path=<name>`
-Read a whitelisted workspace file by logical name.
-
-#### `POST /api/key-file`
-Write to a whitelisted workspace file (read-only files like config are blocked).
-**Body:** `{ "path": "HEARTBEAT.md", "content": "..." }`
-**Limits:** 1MB max body, automatic `.bak` backup before overwrite.
-
-#### `GET /api/logs?service=<service>&lines=<N>`
-Fetch system logs.  
-**Params:** `service` (openclaw|agent-dashboard|tailscaled), `lines` (default 100)
-
-### Quick Actions
-
-#### `POST /api/action/restart-openclaw`
-Restart OpenClaw service.
-
-#### `POST /api/action/restart-dashboard`
-Restart dashboard service.
-
-#### `POST /api/action/clear-cache`
-Clear internal caches.
-
-#### `POST /api/action/update-openclaw`
-Run `npm update -g openclaw`.
-
-#### `POST /api/action/disk-cleanup`
-Run `apt autoremove` and `journalctl --vacuum-time=7d`.
-
-### Claude Usage
-
-#### `POST /api/claude-usage-scrape`
-Trigger usage scrape script.
-
-#### `GET /api/claude-usage`
-Get last scraped usage data.
-
-### Live Feed
-
-#### `GET /api/live`
-Server-Sent Events stream of real-time messages.
-
 ## ⌨️ Keyboard Shortcuts
 
 | Key | Action |
@@ -425,23 +518,6 @@ Server-Sent Events stream of real-time messages.
 | `/` | Focus search box |
 | `Esc` | Close modals and overlays |
 | `?` | Show keyboard shortcuts help |
-
-## 📱 Screenshots
-
-### Overview Page
-![Overview](docs/overview.png)
-
-### Sessions Table
-![Sessions](docs/sessions.png)
-
-### Cost Page
-![Costs](docs/costs.png)
-
-### Rate Limits
-![Limits](docs/limits.png)
-
-### Live Feed
-![Feed](docs/feed.png)
 
 ## 🤝 Contributing
 
@@ -475,7 +551,7 @@ MIT License - see [LICENSE](LICENSE) file for details.
 
 ## 🙏 Acknowledgments
 
-- Used claude code for built.
+- Built with [Claude Code](https://claude.ai)
 - Built for [OpenClaw](https://openclaw.dev)
 - Inspired by modern dashboards (Grafana, Vercel, Railway)
 - Font: [Inter](https://rsms.me/inter/) & [JetBrains Mono](https://www.jetbrains.com/lp/mono/)
