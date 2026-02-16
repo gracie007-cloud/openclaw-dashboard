@@ -3,8 +3,8 @@ const fs = require('fs');
 const path = require('path');
 const os = require('os');
 const { exec } = require('child_process');
+const crypto = require('crypto');
 
-// Configuration via environment variables
 const PORT = parseInt(process.env.DASHBOARD_PORT || '7000');
 const OPENCLAW_DIR = process.env.OPENCLAW_DIR || path.join(os.homedir(), '.openclaw');
 const WORKSPACE_DIR = process.env.WORKSPACE_DIR || process.env.OPENCLAW_WORKSPACE || process.cwd();
@@ -16,6 +16,7 @@ const memoryDir = path.join(WORKSPACE_DIR, 'memory');
 const memoryMdPath = path.join(WORKSPACE_DIR, 'MEMORY.md');
 const heartbeatPath = path.join(WORKSPACE_DIR, 'HEARTBEAT.md');
 const healthHistoryFile = path.join(dataDir, 'health-history.json');
+const auditLogPath = '/root/clawd/data/audit.log';
 
 const skillsDir = path.join(WORKSPACE_DIR, 'skills');
 const configFiles = [
@@ -28,8 +29,141 @@ const scrapeScript = path.join(WORKSPACE_DIR, 'scripts', 'scrape-claude-usage.sh
 
 const htmlPath = path.join(__dirname, 'index.html');
 
-// Ensure data directory exists
 try { fs.mkdirSync(dataDir, { recursive: true }); } catch {}
+try { fs.mkdirSync(path.dirname(auditLogPath), { recursive: true }); } catch {}
+
+let DASHBOARD_TOKEN = process.env.DASHBOARD_TOKEN;
+if (!DASHBOARD_TOKEN) {
+  DASHBOARD_TOKEN = crypto.randomBytes(16).toString('hex');
+  console.log('');
+  console.log('═══════════════════════════════════════════════════════════');
+  console.log('  🔐 DASHBOARD TOKEN (auto-generated)');
+  console.log('═══════════════════════════════════════════════════════════');
+  console.log('');
+  console.log('  ' + DASHBOARD_TOKEN);
+  console.log('');
+  console.log('  Set DASHBOARD_TOKEN env variable to use a custom token.');
+  console.log('═══════════════════════════════════════════════════════════');
+  console.log('');
+}
+
+const rateLimitStore = new Map();
+const loginAttempts = new Map();
+const MAX_FILE_BODY = 1024 * 1024;
+const READ_ONLY_FILES = new Set(['openclaw-gateway.service', 'openclaw-config.json']);
+
+function auditLog(event, ip, details = {}) {
+  try {
+    const timestamp = new Date().toISOString();
+    const entry = JSON.stringify({ timestamp, event, ip, ...details }) + '\n';
+    fs.appendFileSync(auditLogPath, entry, 'utf8');
+    const stats = fs.statSync(auditLogPath);
+    if (stats.size > 10 * 1024 * 1024) {
+      const lines = fs.readFileSync(auditLogPath, 'utf8').split('\n');
+      const keep = lines.slice(-5000).join('\n');
+      fs.writeFileSync(auditLogPath, keep, 'utf8');
+    }
+  } catch {}
+}
+
+function setSecurityHeaders(res) {
+  res.setHeader('X-Content-Type-Options', 'nosniff');
+  res.setHeader('X-Frame-Options', 'DENY');
+  res.setHeader('X-XSS-Protection', '1; mode=block');
+  res.setHeader('Content-Security-Policy', "default-src 'self' 'unsafe-inline'; font-src 'self' https://fonts.gstatic.com; style-src 'self' 'unsafe-inline' https://fonts.googleapis.com");
+  res.setHeader('Referrer-Policy', 'strict-origin-when-cross-origin');
+}
+
+function setSameSiteCORS(req, res) {
+  const origin = req.headers.origin || req.headers.referer;
+  const host = req.headers.host;
+  if (origin && origin.includes(host)) {
+    res.setHeader('Access-Control-Allow-Origin', origin);
+  } else if (!origin) {
+    res.setHeader('Access-Control-Allow-Origin', `http://${host}`);
+  }
+}
+
+function checkRateLimit(ip) {
+  const now = Date.now();
+  const failedAttempts = rateLimitStore.get(ip) || [];
+  const recentFails = failedAttempts.filter(t => now - t < 15 * 60 * 1000);
+  if (recentFails.length >= 20) {
+    const oldestFail = recentFails[0];
+    const lockoutRemaining = Math.ceil((15 * 60 * 1000 - (now - oldestFail)) / 1000);
+    return { blocked: true, remainingSeconds: lockoutRemaining };
+  }
+  return { blocked: false };
+}
+
+function recordFailedAuth(ip) {
+  const now = Date.now();
+  const attempts = rateLimitStore.get(ip) || [];
+  attempts.push(now);
+  rateLimitStore.set(ip, attempts);
+}
+
+function checkLoginLockout(ip) {
+  const now = Date.now();
+  const attempts = loginAttempts.get(ip) || [];
+  const recentAttempts = attempts.filter(t => now - t < 15 * 60 * 1000);
+  if (recentAttempts.length >= 5) {
+    const oldestAttempt = recentAttempts[0];
+    const lockoutRemaining = Math.ceil((15 * 60 * 1000 - (now - oldestAttempt)) / 1000);
+    return { locked: true, remainingSeconds: lockoutRemaining };
+  }
+  return { locked: false };
+}
+
+function recordLoginAttempt(ip) {
+  const now = Date.now();
+  const attempts = loginAttempts.get(ip) || [];
+  attempts.push(now);
+  loginAttempts.set(ip, attempts);
+}
+
+function clearLoginAttempts(ip) {
+  loginAttempts.delete(ip);
+}
+
+function getClientIP(req) {
+  return req.headers['x-forwarded-for']?.split(',')[0]?.trim() || 
+         req.headers['x-real-ip'] || 
+         req.socket.remoteAddress || 
+         'unknown';
+}
+
+function isAuthenticated(req) {
+  const authHeader = req.headers.authorization;
+  if (authHeader && authHeader.startsWith('Bearer ')) {
+    const token = authHeader.substring(7);
+    return token === DASHBOARD_TOKEN;
+  }
+  const url = new URL(req.url, 'http://localhost');
+  const tokenParam = url.searchParams.get('token');
+  return tokenParam === DASHBOARD_TOKEN;
+}
+
+function requireAuth(req, res) {
+  const ip = getClientIP(req);
+  const limitCheck = checkRateLimit(ip);
+  if (limitCheck.blocked) {
+    setSecurityHeaders(res);
+    res.writeHead(429, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Too many failed attempts', retryAfter: limitCheck.remainingSeconds }));
+    return false;
+  }
+  
+  if (!isAuthenticated(req)) {
+    recordFailedAuth(ip);
+    auditLog('auth_failed', ip, { url: req.url });
+    setSecurityHeaders(res);
+    res.writeHead(401, { 'Content-Type': 'application/json' });
+    res.end(JSON.stringify({ error: 'Unauthorized' }));
+    return false;
+  }
+  return true;
+}
 
 function getGitRepos() {
   const repos = [];
@@ -42,7 +176,6 @@ function getGitRepos() {
       });
     }
   } catch {}
-  // Also check workspace root
   if (fs.existsSync(path.join(WORKSPACE_DIR, '.git'))) repos.push({ path: WORKSPACE_DIR, name: path.basename(WORKSPACE_DIR) });
   return repos;
 }
@@ -55,14 +188,12 @@ function resolveName(key) {
       if (fs.existsSync(cronFile)) {
         const crons = JSON.parse(fs.readFileSync(cronFile, 'utf8'));
         const jobs = crons.jobs || [];
-        // Extract the cron UUID from the key (after "cron:")
         const cronPart = key.split('cron:')[1] || '';
-        const cronUuid = cronPart.split(':')[0]; // get just the UUID, not :run:xxx
+        const cronUuid = cronPart.split(':')[0];
         const job = jobs.find(j => j.id === cronUuid);
         if (job && job.name) return job.name;
       }
     } catch {}
-    // Extract short ID for fallback
     const cronPart = key.split('cron:')[1] || '';
     const cronUuid = cronPart.split(':')[0];
     return 'Cron: ' + cronUuid.substring(0, 8);
@@ -220,7 +351,7 @@ function getCostData() {
                 const jf = path.join(sessDir, sid + '.jsonl');
                 if (!fs.existsSync(jf)) {
                   const del = fs.readdirSync(sessDir).find(f => f.startsWith(sid) && f.includes('.deleted'));
-                  if (del) { /* deleted session, no label */ }
+                  if (del) { }
                 }
                 if (fs.existsSync(jf)) {
                   const lines = fs.readFileSync(jf, 'utf8').split('\n');
@@ -274,7 +405,6 @@ function getUsageWindows() {
     const now = Date.now();
     const fiveHoursMs = 5 * 3600000;
     const oneWeekMs = 7 * 86400000;
-    // Only read files modified within the week window
     const files = fs.readdirSync(sessDir).filter(f => {
       if (!f.endsWith('.jsonl')) return false;
       try { return fs.statSync(path.join(sessDir, f)).mtimeMs > now - oneWeekMs; } catch { return false; }
@@ -405,7 +535,6 @@ function getUsageWindows() {
   }
 }
 
-// Track rate limit hits from OpenClaw logs
 function getRateLimitEvents() {
   try {
     const files = fs.readdirSync(sessDir).filter(f => f.endsWith('.jsonl'));
@@ -421,7 +550,6 @@ function getRateLimitEvents() {
           const d = JSON.parse(line);
           const ts = d.timestamp ? new Date(d.timestamp).getTime() : 0;
           if (now - ts > fiveHoursMs) continue;
-          // Check for rate limit / overloaded errors
           if (d.type === 'error' || (d.message && d.message.stopReason === 'rate_limit')) {
             const text = JSON.stringify(d);
             if (text.includes('rate') || text.includes('overloaded') || text.includes('429') || text.includes('limit')) {
@@ -438,8 +566,6 @@ function getRateLimitEvents() {
 let usageCache = null;
 let usageCacheTime = 0;
 
-// On macOS, os.freemem() is tiny (most RAM is "file cache"), so (total - free) ≈ 100%.
-// Use vm_stat to get active + wired = memory actually in use for a sensible percentage.
 function getMemoryStats() {
   const totalMem = os.totalmem();
   if (process.platform !== 'darwin') {
@@ -479,7 +605,6 @@ function getMemoryStats() {
   }
 }
 
-// System stats
 function getSystemStats() {
   try {
     const mem = getMemoryStats();
@@ -610,9 +735,7 @@ function watchSessionFile(file) {
 function startLiveWatcher() {
   if (liveWatcher) return;
   try {
-    // Watch existing files
     fs.readdirSync(sessDir).filter(f => f.endsWith('.jsonl')).forEach(watchSessionFile);
-    // Watch directory for new session files
     liveWatcher = fs.watch(sessDir, (eventType, filename) => {
       if (filename && filename.endsWith('.jsonl') && !_fileWatchers[filename]) {
         try { if (fs.existsSync(path.join(sessDir, filename))) watchSessionFile(filename); } catch {}
@@ -674,7 +797,6 @@ function formatLiveEvent(data) {
       content = msg.content.substring(0, 150);
     }
     
-    // For tool results at top level
     if (!content && msg.type === 'tool_result') {
       const rc = typeof msg.content === 'string' ? msg.content : JSON.stringify(msg.content || '');
       content = `📋 ${rc.substring(0, 100)}`;
@@ -760,16 +882,13 @@ function getServicesStatus() {
   }
 
   if (os.platform() === 'darwin') {
-    // agent-dashboard = gateway web UI; check if it's reachable at localhost:18789
     const gatewayUrl = process.env.GATEWAY_DASHBOARD_URL || 'http://localhost:18789';
     let agentDashboardActive = false;
     try {
       const code = execSync(`curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 --max-time 3 "${gatewayUrl}" 2>/dev/null`, { encoding: 'utf8', timeout: 5000 }).trim();
       agentDashboardActive = code.length >= 1 && (code[0] === '2' || code[0] === '3');
-    } catch { /* unreachable or no curl */ }
+    } catch { }
 
-    // tailscaled on macOS: CLI is often the app bundle (shell "tailscale" may be an alias Node doesn't see).
-    // Try app bundle path first, then PATH; exit 0 = daemon up.
     let tailscaledActive = false;
     const tailscalePaths = ['/Applications/Tailscale.app/Contents/MacOS/Tailscale', 'tailscale'];
     for (const t of tailscalePaths) {
@@ -777,10 +896,9 @@ function getServicesStatus() {
         execSync(`${t} status 2>/dev/null`, { encoding: 'utf8', timeout: 3000 });
         tailscaledActive = true;
         break;
-      } catch { /* try next */ }
+      } catch { }
     }
 
-    // openclaw: check user launchctl (first column PID, last column label)
     let listOut = '';
     try {
       listOut = execSync('launchctl list 2>/dev/null', { encoding: 'utf8', timeout: 3000 });
@@ -805,7 +923,6 @@ function getServicesStatus() {
     });
   }
 
-  // Other platforms: no system service manager we support
   return services.map(name => ({ name, active: null }));
 }
 
@@ -836,9 +953,6 @@ function getMemoryFiles() {
   } catch {}
   return files;
 }
-
-const MAX_FILE_BODY = 1024 * 1024; // 1MB max POST body
-const READ_ONLY_FILES = new Set(['openclaw-gateway.service', 'openclaw-config.json']);
 
 function getKeyFiles() {
   const files = [];
@@ -882,7 +996,6 @@ function getKeyFiles() {
   return files;
 }
 
-// Build whitelist map: logical name -> absolute path (internal only, never exposed)
 function buildKeyFilesAllowed() {
   const map = {};
   for (const fname of workspaceFilenames) {
@@ -990,7 +1103,6 @@ function trackDiskHistory(diskPercent) {
   return history;
 }
 
-// Health history tracking
 let healthHistory = [];
 try {
   if (fs.existsSync(healthHistoryFile)) {
@@ -1007,7 +1119,6 @@ function saveHealthSnapshot() {
       cpu: stats.cpu?.usage || 0,
       ram: stats.memory?.percent || 0
     });
-    // Keep last 24h (288 points at 5min intervals)
     if (healthHistory.length > 288) {
       healthHistory = healthHistory.slice(-288);
     }
@@ -1019,542 +1130,611 @@ function saveHealthSnapshot() {
   }
 }
 
-// Save health snapshot every 5 minutes
 setInterval(saveHealthSnapshot, 5 * 60 * 1000);
-saveHealthSnapshot(); // Initial snapshot
+saveHealthSnapshot();
 
 const server = http.createServer((req, res) => {
-  if (req.url === '/api/sessions') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify(getSessionsJson()));
-    return;
-  }
-  if (req.url === '/api/usage') {
-    const now = Date.now();
-    if (!usageCache || now - usageCacheTime > 10000) {
-      usageCache = getUsageWindows();
-      usageCacheTime = now;
+  setSecurityHeaders(res);
+  const ip = getClientIP(req);
+
+  if (req.url === '/api/auth/verify') {
+    if (isAuthenticated(req)) {
+      setSameSiteCORS(req, res);
+      auditLog('auth_verify_success', ip);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ valid: true }));
+    } else {
+      recordFailedAuth(ip);
+      auditLog('auth_verify_failed', ip);
+      res.writeHead(401, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ valid: false }));
     }
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify(usageCache));
     return;
   }
-  if (req.url === '/api/costs') {
-    const now = Date.now();
-    if (!costCache || now - costCacheTime > 60000) {
-      costCache = getCostData();
-      costCacheTime = now;
+
+  if (req.url === '/api/auth/login' && req.method === 'POST') {
+    const lockout = checkLoginLockout(ip);
+    if (lockout.locked) {
+      auditLog('login_locked', ip, { remainingSeconds: lockout.remainingSeconds });
+      res.writeHead(429, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ error: 'Too many failed login attempts', lockoutRemaining: lockout.remainingSeconds }));
+      return;
     }
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify(costCache));
+
+    let body = '';
+    req.on('data', chunk => { body += chunk; if (body.length > 1024) req.destroy(); });
+    req.on('end', () => {
+      try {
+        const { token } = JSON.parse(body);
+        if (token === DASHBOARD_TOKEN) {
+          clearLoginAttempts(ip);
+          auditLog('login_success', ip);
+          setSameSiteCORS(req, res);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, token: DASHBOARD_TOKEN }));
+        } else {
+          recordLoginAttempt(ip);
+          auditLog('login_failed', ip);
+          res.writeHead(401, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid token' }));
+        }
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: 'Bad request' }));
+      }
+    });
     return;
   }
-  if (req.url === '/api/system') {
-    const stats = getSystemStats();
-    if (stats.disk) stats.diskHistory = trackDiskHistory(stats.disk.percent || 0);
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify(stats));
-    return;
-  }
-  if (req.url.startsWith('/api/session-messages?')) {
-    const params = new URL(req.url, 'http://localhost').searchParams;
-    const rawId = params.get('id') || '';
-    const sessionId = rawId.replace(/[^a-zA-Z0-9\-_:.]/g, '');
-    const messages = [];
+
+  if (req.url === '/' || req.url === '/index.html') {
     try {
-      const files = fs.readdirSync(sessDir).filter(f => f.endsWith('.jsonl'));
-      let targetFile = files.find(f => f.includes(sessionId));
-      if (!targetFile) {
-        const sFile = path.join(sessDir, 'sessions.json');
-        const data = JSON.parse(fs.readFileSync(sFile, 'utf8'));
-        for (const [k, v] of Object.entries(data)) {
-          if (k === sessionId && v.sessionId) {
-            targetFile = files.find(f => f.includes(v.sessionId));
-            break;
+      const html = fs.readFileSync(htmlPath, 'utf8');
+      res.writeHead(200, { 'Content-Type': 'text/html' });
+      res.end(html);
+    } catch (e) {
+      res.writeHead(500);
+      res.end('Error loading dashboard');
+    }
+    return;
+  }
+
+  if (req.url.startsWith('/api/')) {
+    if (!requireAuth(req, res)) return;
+    setSameSiteCORS(req, res);
+
+    if (req.url === '/api/sessions') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(getSessionsJson()));
+      return;
+    }
+    if (req.url === '/api/usage') {
+      const now = Date.now();
+      if (!usageCache || now - usageCacheTime > 10000) {
+        usageCache = getUsageWindows();
+        usageCacheTime = now;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(usageCache));
+      return;
+    }
+    if (req.url === '/api/costs') {
+      const now = Date.now();
+      if (!costCache || now - costCacheTime > 60000) {
+        costCache = getCostData();
+        costCacheTime = now;
+      }
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(costCache));
+      return;
+    }
+    if (req.url === '/api/system') {
+      const stats = getSystemStats();
+      if (stats.disk) stats.diskHistory = trackDiskHistory(stats.disk.percent || 0);
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(stats));
+      return;
+    }
+    if (req.url.startsWith('/api/session-messages?')) {
+      const params = new URL(req.url, 'http://localhost').searchParams;
+      const rawId = params.get('id') || '';
+      const sessionId = rawId.replace(/[^a-zA-Z0-9\-_:.]/g, '');
+      const messages = [];
+      try {
+        const files = fs.readdirSync(sessDir).filter(f => f.endsWith('.jsonl'));
+        let targetFile = files.find(f => f.includes(sessionId));
+        if (!targetFile) {
+          const sFile = path.join(sessDir, 'sessions.json');
+          const data = JSON.parse(fs.readFileSync(sFile, 'utf8'));
+          for (const [k, v] of Object.entries(data)) {
+            if (k === sessionId && v.sessionId) {
+              targetFile = files.find(f => f.includes(v.sessionId));
+              break;
+            }
           }
         }
-      }
-      if (targetFile) {
-        const lines = fs.readFileSync(path.join(sessDir, targetFile), 'utf8').split('\n').filter(l => l.trim());
-        for (let i = Math.max(0, lines.length - 30); i < lines.length; i++) {
-          try {
-            const d = JSON.parse(lines[i]);
-            if (d.type !== 'message') continue;
-            const msg = d.message;
-            if (!msg) continue;
-            let text = '';
-            if (typeof msg.content === 'string') text = msg.content;
-            else if (Array.isArray(msg.content)) {
-              for (const b of msg.content) {
-                if (b.type === 'text' && b.text) { text = b.text; break; }
-                if (b.type === 'tool_use' || b.type === 'toolCall') { text = '🔧 ' + (b.name || b.toolName || 'tool'); break; }
+        if (targetFile) {
+          const lines = fs.readFileSync(path.join(sessDir, targetFile), 'utf8').split('\n').filter(l => l.trim());
+          for (let i = Math.max(0, lines.length - 30); i < lines.length; i++) {
+            try {
+              const d = JSON.parse(lines[i]);
+              if (d.type !== 'message') continue;
+              const msg = d.message;
+              if (!msg) continue;
+              let text = '';
+              if (typeof msg.content === 'string') text = msg.content;
+              else if (Array.isArray(msg.content)) {
+                for (const b of msg.content) {
+                  if (b.type === 'text' && b.text) { text = b.text; break; }
+                  if (b.type === 'tool_use' || b.type === 'toolCall') { text = '🔧 ' + (b.name || b.toolName || 'tool'); break; }
+                }
               }
-            }
-            if (text) messages.push({ role: msg.role || 'unknown', content: text.substring(0, 300), timestamp: d.timestamp || '' });
-          } catch {}
-        }
-      }
-    } catch {}
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify(messages));
-    return;
-  }
-  if (req.url === '/api/crons') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify(getCronJobs()));
-    return;
-  }
-  if (req.url === '/api/git') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify(getGitActivity()));
-    return;
-  }
-  if (req.url === '/api/services') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify(getServicesStatus()));
-    return;
-  }
-  if (req.url === '/api/memory') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify(getMemoryFiles()));
-    return;
-  }
-  if (req.url === '/api/tokens-today') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify(getTodayTokens()));
-    return;
-  }
-  if (req.url === '/api/config') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify({ name: 'OpenClaw Dashboard', version: '1.0.0' }));
-    return;
-  }
-  if (req.url === '/api/claude-usage-scrape' && req.method === 'POST') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    const { exec } = require('child_process');
-    if (fs.existsSync(scrapeScript)) {
-      exec(`bash ${scrapeScript}`, { timeout: 60000 }, (err) => {});
-      res.end(JSON.stringify({ status: 'started' }));
-    } else {
-      res.end(JSON.stringify({ status: 'error', message: 'Scrape script not found' }));
-    }
-    return;
-  }
-  if (req.url === '/api/claude-usage') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    try {
-      const data = JSON.parse(fs.readFileSync(claudeUsageFile, 'utf8'));
-      res.end(JSON.stringify(data));
-    } catch {
-      res.end(JSON.stringify({ error: 'No usage data. Run scrape-claude-usage.sh first.' }));
-    }
-    return;
-  }
-  if (req.url === '/api/response-time') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify({ avgSeconds: getAvgResponseTime() }));
-    return;
-  }
-  if (req.url.startsWith('/api/logs?')) {
-    try {
-      const params = new URL(req.url, 'http://localhost').searchParams;
-      const allowedServices = ['openclaw', 'agent-dashboard', 'tailscaled', 'sshd', 'nginx'];
-      const service = params.get('service') || 'openclaw';
-      if (!allowedServices.includes(service)) {
-        res.writeHead(400, { 'Content-Type': 'text/plain' });
-        res.end('Invalid service name');
-        return;
-      }
-      if (process.platform !== 'linux') {
-        res.writeHead(200, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
-        res.end('Logs (journalctl) are only available on Linux.\nOn macOS use Console.app or: log show --predicate \'processImagePath contains "openclaw"\' --last 1h');
-        return;
-      }
-      const lines = Math.min(Math.max(parseInt(params.get('lines')) || 100, 1), 1000);
-      const { execSync } = require('child_process');
-      const logs = execSync(`journalctl -u ${service} --no-pager -n ${lines} -o short 2>/dev/null || echo "No logs available"`, { encoding: 'utf8', timeout: 10000 });
-      res.writeHead(200, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
-      res.end(logs);
-    } catch (e) {
-      res.writeHead(500, { 'Content-Type': 'text/plain' });
-      res.end('Error fetching logs');
-    }
-    return;
-  }
-  if (req.url === '/api/action/restart-openclaw' && req.method === 'POST') {
-    try {
-      const { exec } = require('child_process');
-      exec('systemctl restart openclaw', (err) => {});
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ success: true }));
-    } catch (e) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: e.message }));
-    }
-    return;
-  }
-  if (req.url === '/api/action/restart-dashboard' && req.method === 'POST') {
-    try {
-      const { exec } = require('child_process');
-      setTimeout(() => {
-        exec('systemctl restart agent-dashboard', (err) => {});
-      }, 2000);
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ success: true, message: 'Restarting in 2 seconds...' }));
-    } catch (e) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: e.message }));
-    }
-    return;
-  }
-  if (req.url === '/api/action/clear-cache' && req.method === 'POST') {
-    try {
-      costCache = null;
-      usageCache = null;
-      costCacheTime = 0;
-      usageCacheTime = 0;
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ success: true }));
-    } catch (e) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: e.message }));
-    }
-    return;
-  }
-  if (req.url === '/api/action/restart-tailscale' && req.method === 'POST') {
-    exec('systemctl restart tailscaled', (err) => {
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ success: !err, error: err?.message }));
-    });
-    return;
-  }
-  if (req.url === '/api/action/update-openclaw' && req.method === 'POST') {
-    exec('npm update -g openclaw', { timeout: 120000 }, (err, stdout) => {
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ success: !err, output: stdout?.trim(), error: err?.message }));
-    });
-    return;
-  }
-  if (req.url === '/api/action/kill-tmux' && req.method === 'POST') {
-    exec('tmux kill-server 2>/dev/null; echo ok', (err, stdout) => {
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ success: true }));
-    });
-    return;
-  }
-  if (req.url === '/api/action/gc' && req.method === 'POST') {
-    const projDir = path.join(WORKSPACE_DIR, 'projects');
-    exec(`if [ -d "${projDir}" ]; then for d in ${projDir}/*/; do cd "$d" && git gc --quiet 2>/dev/null; done; fi; cd ${WORKSPACE_DIR} && git gc --quiet 2>/dev/null; echo ok`, (err) => {
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ success: true }));
-    });
-    return;
-  }
-  if (req.url === '/api/action/check-update' && req.method === 'POST') {
-    exec('npm outdated -g openclaw 2>/dev/null || echo "up to date"', { timeout: 30000 }, (err, stdout) => {
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ success: true, output: (stdout || '').trim() || 'All packages up to date' }));
-    });
-    return;
-  }
-  if (req.url === '/api/action/sys-update' && req.method === 'POST') {
-    exec('apt update -qq && apt upgrade -y -qq 2>&1 | tail -5', { timeout: 300000 }, (err, stdout) => {
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ success: !err, output: (stdout || '').trim(), error: err?.message }));
-    });
-    return;
-  }
-  if (req.url === '/api/action/disk-cleanup' && req.method === 'POST') {
-    exec('apt autoremove -y -qq 2>/dev/null; apt clean 2>/dev/null; journalctl --vacuum-time=7d 2>/dev/null; echo "Cleanup done"', { timeout: 60000 }, (err, stdout) => {
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ success: true, output: (stdout || '').trim() }));
-    });
-    return;
-  }
-  if (req.url === '/api/action/restart-claude' && req.method === 'POST') {
-    exec(`tmux kill-session -t claude-persistent 2>/dev/null; sleep 1; tmux new-session -d -s claude-persistent -x 200 -y 60 && tmux send-keys -t claude-persistent "cd ${WORKSPACE_DIR} && claude" Enter && echo "Claude session started"`, { timeout: 20000 }, (err, stdout) => {
-      res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-      res.end(JSON.stringify({ success: !err, output: (stdout || '').trim() }));
-    });
-    return;
-  }
-  if (req.url === '/api/tailscale') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    try {
-      const { execSync } = require('child_process');
-      const statusJson = execSync('tailscale status --json 2>/dev/null', { encoding: 'utf8', timeout: 5000 });
-      const status = JSON.parse(statusJson);
-      const self = status.Self || {};
-      const peers = Object.values(status.Peer || {}).filter(p => p.Online).length;
-      let routes = [];
-      try {
-        const serveStatus = execSync('tailscale serve status 2>/dev/null', { encoding: 'utf8', timeout: 3000 });
-        if (serveStatus && !serveStatus.includes('No serve config')) {
-          routes = serveStatus.split('\n').filter(l => l.includes('http')).map(l => l.trim());
+              if (text) messages.push({ role: msg.role || 'unknown', content: text.substring(0, 300), timestamp: d.timestamp || '' });
+            } catch {}
+          }
         }
       } catch {}
-      res.end(JSON.stringify({
-        hostname: self.HostName || 'unknown',
-        ip: self.TailscaleIPs?.[0] || 'unknown',
-        online: self.Online || false,
-        peers,
-        routes
-      }));
-    } catch (e) {
-      res.end(JSON.stringify({ error: 'Tailscale not available', hostname: '--', ip: '--', online: false, peers: 0, routes: [] }));
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(messages));
+      return;
     }
-    return;
-  }
-  if (req.url === '/api/lifetime-stats') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    try {
-      const now = Date.now();
-      const cacheKey = 'lifetimeStats';
-      const cacheTime = global[cacheKey + 'Time'] || 0;
-      if (global[cacheKey] && now - cacheTime < 300000) {
-        res.end(JSON.stringify(global[cacheKey]));
-        return;
-      }
-      const files = fs.readdirSync(sessDir).filter(f => f.endsWith('.jsonl'));
-      let totalTokens = 0, totalMessages = 0, totalCost = 0, totalSessions = files.length;
-      let firstSessionDate = null;
-      const activeDays = new Set();
-      for (const file of files) {
-        const lines = fs.readFileSync(path.join(sessDir, file), 'utf8').split('\n');
-        for (const line of lines) {
-          if (!line.trim()) continue;
-          try {
-            const d = JSON.parse(line);
-            if (d.type !== 'message') continue;
-            totalMessages++;
-            const msg = d.message;
-            if (msg?.usage) {
-              const inTok = (msg.usage.input || 0) + (msg.usage.cacheRead || 0) + (msg.usage.cacheWrite || 0);
-              const outTok = msg.usage.output || 0;
-              totalTokens += inTok + outTok;
-              totalCost += msg.usage.cost?.total || 0;
-            }
-            if (d.timestamp) {
-              const ts = new Date(d.timestamp).getTime();
-              if (!firstSessionDate || ts < firstSessionDate) firstSessionDate = ts;
-              const day = d.timestamp.substring(0, 10);
-              activeDays.add(day);
-            }
-          } catch {}
-        }
-      }
-      const result = {
-        totalTokens,
-        totalMessages,
-        totalCost: Math.round(totalCost * 100) / 100,
-        totalSessions,
-        firstSessionDate,
-        daysActive: activeDays.size
-      };
-      global[cacheKey] = result;
-      global[cacheKey + 'Time'] = now;
-      res.end(JSON.stringify(result));
-    } catch (e) {
-      res.end(JSON.stringify({ totalTokens: 0, totalMessages: 0, totalCost: 0, totalSessions: 0, firstSessionDate: null, daysActive: 0 }));
+    if (req.url === '/api/crons') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(getCronJobs()));
+      return;
     }
-    return;
-  }
-  if (req.url === '/api/health-history') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify(healthHistory));
-    return;
-  }
-  if (req.url === '/api/memory-files') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify(getMemoryFiles()));
-    return;
-  }
-  if (req.url.startsWith('/api/memory-file?')) {
-    try {
-      const params = new URL(req.url, 'http://localhost').searchParams;
-      const fname = params.get('path') || '';
-      let fpath = '';
-      if (fname === 'MEMORY.md') fpath = memoryMdPath;
-      else if (fname === 'HEARTBEAT.md') fpath = heartbeatPath;
-      else if (fname.startsWith('memory/') && !fname.includes('..')) fpath = path.join(WORKSPACE_DIR, fname);
-      else throw new Error('Invalid path');
-      
-      if (fs.existsSync(fpath)) {
-        const content = fs.readFileSync(fpath, 'utf8');
-        res.writeHead(200, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
-        res.end(content);
+    if (req.url === '/api/git') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(getGitActivity()));
+      return;
+    }
+    if (req.url === '/api/services') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(getServicesStatus()));
+      return;
+    }
+    if (req.url === '/api/memory') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(getMemoryFiles()));
+      return;
+    }
+    if (req.url === '/api/tokens-today') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(getTodayTokens()));
+      return;
+    }
+    if (req.url === '/api/config') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ name: 'OpenClaw Dashboard', version: '1.0.0' }));
+      return;
+    }
+    if (req.url === '/api/claude-usage-scrape' && req.method === 'POST') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      if (fs.existsSync(scrapeScript)) {
+        exec(`bash ${scrapeScript}`, { timeout: 60000 }, (err) => {});
+        res.end(JSON.stringify({ status: 'started' }));
       } else {
-        res.writeHead(404, { 'Content-Type': 'text/plain' });
-        res.end('File not found');
+        res.end(JSON.stringify({ status: 'error', message: 'Scrape script not found' }));
       }
-    } catch (e) {
-      res.writeHead(400, { 'Content-Type': 'text/plain' });
-      res.end('Bad request');
+      return;
     }
-    return;
-  }
-  if (req.url === '/api/key-files') {
-    res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-    res.end(JSON.stringify(getKeyFiles()));
-    return;
-  }
-  if (req.url.startsWith('/api/key-file') && req.method === 'GET') {
-    try {
-      const params = new URL(req.url, 'http://localhost').searchParams;
-      const name = params.get('path') || '';
-      const allowed = buildKeyFilesAllowed();
-      if (!allowed[name]) {
-        res.writeHead(403, { 'Content-Type': 'text/plain' });
-        res.end('Forbidden');
-        return;
-      }
-      const fpath = allowed[name];
-      if (!fs.existsSync(fpath)) {
-        res.writeHead(404, { 'Content-Type': 'text/plain' });
-        res.end('File not found');
-        return;
-      }
-      const content = fs.readFileSync(fpath, 'utf8');
-      res.writeHead(200, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
-      res.end(content);
-    } catch (e) {
-      res.writeHead(400, { 'Content-Type': 'text/plain' });
-      res.end('Bad request');
-    }
-    return;
-  }
-  if (req.url === '/api/key-file' && req.method === 'POST') {
-    let body = '';
-    let overflow = false;
-    req.on('data', chunk => {
-      body += chunk;
-      if (body.length > MAX_FILE_BODY) { overflow = true; req.destroy(); }
-    });
-    req.on('end', () => {
-      if (overflow) {
-        res.writeHead(413, { 'Content-Type': 'application/json' });
-        res.end(JSON.stringify({ error: 'Payload too large (max 1MB)' }));
-        return;
-      }
+    if (req.url === '/api/claude-usage') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
       try {
-        const { path: name, content } = JSON.parse(body);
-        if (typeof name !== 'string' || typeof content !== 'string') {
-          res.writeHead(400, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Invalid request body' }));
+        const data = JSON.parse(fs.readFileSync(claudeUsageFile, 'utf8'));
+        res.end(JSON.stringify(data));
+      } catch {
+        res.end(JSON.stringify({ error: 'No usage data. Run scrape-claude-usage.sh first.' }));
+      }
+      return;
+    }
+    if (req.url === '/api/response-time') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify({ avgSeconds: getAvgResponseTime() }));
+      return;
+    }
+    if (req.url.startsWith('/api/logs?')) {
+      try {
+        const params = new URL(req.url, 'http://localhost').searchParams;
+        const allowedServices = ['openclaw', 'agent-dashboard', 'tailscaled', 'sshd', 'nginx'];
+        const service = params.get('service') || 'openclaw';
+        if (!allowedServices.includes(service)) {
+          res.writeHead(400, { 'Content-Type': 'text/plain' });
+          res.end('Invalid service name');
           return;
         }
-        if (READ_ONLY_FILES.has(name)) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'File is read-only' }));
+        if (process.platform !== 'linux') {
+          res.writeHead(200, { 'Content-Type': 'text/plain' });
+          res.end('Logs (journalctl) are only available on Linux.\nOn macOS use Console.app or: log show --predicate \'processImagePath contains "openclaw"\' --last 1h');
           return;
         }
-        const allowed = buildKeyFilesAllowed();
-        if (!allowed[name]) {
-          res.writeHead(403, { 'Content-Type': 'application/json' });
-          res.end(JSON.stringify({ error: 'Forbidden' }));
-          return;
-        }
-        const fpath = allowed[name];
-        // Backup existing file before overwrite
-        try {
-          if (fs.existsSync(fpath)) {
-            fs.copyFileSync(fpath, fpath + '.bak');
-          }
-        } catch {}
-        const tmp = fpath + '.tmp.' + Date.now();
-        fs.writeFileSync(tmp, content, 'utf8');
-        fs.renameSync(tmp, fpath);
-        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
+        const lines = Math.min(Math.max(parseInt(params.get('lines')) || 100, 1), 1000);
+        const { execSync } = require('child_process');
+        const logs = execSync(`journalctl -u ${service} --no-pager -n ${lines} -o short 2>/dev/null || echo "No logs available"`, { encoding: 'utf8', timeout: 10000 });
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end(logs);
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'text/plain' });
+        res.end('Error fetching logs');
+      }
+      return;
+    }
+    if (req.url === '/api/action/restart-openclaw' && req.method === 'POST') {
+      try {
+        auditLog('action_restart_openclaw', ip);
+        exec('systemctl restart openclaw', (err) => {});
+        res.writeHead(200, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ success: true }));
       } catch (e) {
         res.writeHead(500, { 'Content-Type': 'application/json' });
         res.end(JSON.stringify({ error: e.message }));
       }
-    });
-    return;
-  }
-  if (req.url.startsWith('/api/cron/') && req.method === 'POST') {
-    try {
-      const parts = req.url.split('/');
-      const action = parts[parts.length - 1];
-      const id = parts[parts.length - 2].replace(/[^a-zA-Z0-9\-_]/g, '');
-      if (!id) { res.writeHead(400); res.end('Invalid id'); return; }
-      
-      if (action === 'toggle') {
-        const { execSync } = require('child_process');
-        if (!fs.existsSync(cronFile)) throw new Error('No cron file');
-        const data = JSON.parse(fs.readFileSync(cronFile, 'utf8'));
-        const job = (data.jobs || []).find(j => j.id === id);
-        if (!job) throw new Error('Job not found');
-        job.enabled = !job.enabled;
-        fs.writeFileSync(cronFile, JSON.stringify(data, null, 2));
-        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-        res.end(JSON.stringify({ success: true, enabled: job.enabled }));
-      } else if (action === 'run') {
-        const { exec } = require('child_process');
-        exec(`openclaw cron run ${id}`, { timeout: 60000 }, (err) => {});
-        res.writeHead(200, { 'Content-Type': 'application/json', 'Access-Control-Allow-Origin': '*' });
-        res.end(JSON.stringify({ success: true }));
-      } else {
-        res.writeHead(404);
-        res.end('Not found');
-      }
-    } catch (e) {
-      res.writeHead(500, { 'Content-Type': 'application/json' });
-      res.end(JSON.stringify({ error: e.message }));
+      return;
     }
-    return;
-  }
-  if (req.url === '/api/live') {
-    res.writeHead(200, {
-      'Content-Type': 'text/event-stream',
-      'Cache-Control': 'no-cache',
-      'Connection': 'keep-alive',
-      'Access-Control-Allow-Origin': '*'
-    });
-    
-    liveClients.push(res);
-    startLiveWatcher();
-    
-    res.write('data: {"status":"connected"}\n\n');
-    
-    try {
-      // Only backfill from recently modified sessions (last 1h)
-      const cutoff = Date.now() - 3600000;
-      const files = fs.readdirSync(sessDir).filter(f => {
-        if (!f.endsWith('.jsonl')) return false;
-        try { return fs.statSync(path.join(sessDir, f)).mtimeMs > cutoff; } catch { return false; }
-      });
-      const recentEvents = [];
-      files.forEach(file => {
-        const sessionKey = file.replace('.jsonl', '');
-        const content = fs.readFileSync(path.join(sessDir, file), 'utf8');
-        const lines = content.split('\n').filter(l => l.trim());
-        lines.slice(-5).forEach(line => {
-          try {
-            const data = JSON.parse(line);
-            data._sessionKey = sessionKey;
-            const event = formatLiveEvent(data);
-            if (event) recentEvents.push(event);
-          } catch {}
-        });
-      });
-      recentEvents.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
-      recentEvents.slice(0, 20).forEach(event => {
-        res.write(`data: ${JSON.stringify(event)}\n\n`);
-      });
-    } catch {}
-    
-    req.on('close', () => {
-      liveClients = liveClients.filter(client => client !== res);
-      if (liveClients.length === 0) {
-        if (liveWatcher) { try { liveWatcher.close(); } catch {} liveWatcher = null; }
-        Object.keys(_fileWatchers).forEach(k => { try { _fileWatchers[k].close(); } catch {} delete _fileWatchers[k]; });
+    if (req.url === '/api/action/restart-dashboard' && req.method === 'POST') {
+      try {
+        auditLog('action_restart_dashboard', ip);
+        setTimeout(() => {
+          exec('systemctl restart agent-dashboard', (err) => {});
+        }, 2000);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, message: 'Restarting in 2 seconds...' }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
       }
-    });
-    
-    return;
+      return;
+    }
+    if (req.url === '/api/action/clear-cache' && req.method === 'POST') {
+      try {
+        costCache = null;
+        usageCache = null;
+        costCacheTime = 0;
+        usageCacheTime = 0;
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+      return;
+    }
+    if (req.url === '/api/action/restart-tailscale' && req.method === 'POST') {
+      auditLog('action_restart_tailscale', ip);
+      exec('systemctl restart tailscaled', (err) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: !err, error: err?.message }));
+      });
+      return;
+    }
+    if (req.url === '/api/action/update-openclaw' && req.method === 'POST') {
+      auditLog('action_update_openclaw', ip);
+      exec('npm update -g openclaw', { timeout: 120000 }, (err, stdout) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: !err, output: stdout?.trim(), error: err?.message }));
+      });
+      return;
+    }
+    if (req.url === '/api/action/kill-tmux' && req.method === 'POST') {
+      exec('tmux kill-server 2>/dev/null; echo ok', (err, stdout) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      });
+      return;
+    }
+    if (req.url === '/api/action/gc' && req.method === 'POST') {
+      const projDir = path.join(WORKSPACE_DIR, 'projects');
+      exec(`if [ -d "${projDir}" ]; then for d in ${projDir}/*/; do cd "$d" && git gc --quiet 2>/dev/null; done; fi; cd ${WORKSPACE_DIR} && git gc --quiet 2>/dev/null; echo ok`, (err) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      });
+      return;
+    }
+    if (req.url === '/api/action/check-update' && req.method === 'POST') {
+      exec('npm outdated -g openclaw 2>/dev/null || echo "up to date"', { timeout: 30000 }, (err, stdout) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, output: (stdout || '').trim() || 'All packages up to date' }));
+      });
+      return;
+    }
+    if (req.url === '/api/action/sys-update' && req.method === 'POST') {
+      auditLog('action_sys_update', ip);
+      exec('apt update -qq && apt upgrade -y -qq 2>&1 | tail -5', { timeout: 300000 }, (err, stdout) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: !err, output: (stdout || '').trim(), error: err?.message }));
+      });
+      return;
+    }
+    if (req.url === '/api/action/disk-cleanup' && req.method === 'POST') {
+      exec('apt autoremove -y -qq 2>/dev/null; apt clean 2>/dev/null; journalctl --vacuum-time=7d 2>/dev/null; echo "Cleanup done"', { timeout: 60000 }, (err, stdout) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true, output: (stdout || '').trim() }));
+      });
+      return;
+    }
+    if (req.url === '/api/action/restart-claude' && req.method === 'POST') {
+      exec(`tmux kill-session -t claude-persistent 2>/dev/null; sleep 1; tmux new-session -d -s claude-persistent -x 200 -y 60 && tmux send-keys -t claude-persistent "cd ${WORKSPACE_DIR} && claude" Enter && echo "Claude session started"`, { timeout: 20000 }, (err, stdout) => {
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: !err, output: (stdout || '').trim() }));
+      });
+      return;
+    }
+    if (req.url === '/api/tailscale') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      try {
+        const { execSync } = require('child_process');
+        const statusJson = execSync('tailscale status --json 2>/dev/null', { encoding: 'utf8', timeout: 5000 });
+        const status = JSON.parse(statusJson);
+        const self = status.Self || {};
+        const peers = Object.values(status.Peer || {}).filter(p => p.Online).length;
+        let routes = [];
+        try {
+          const serveStatus = execSync('tailscale serve status 2>/dev/null', { encoding: 'utf8', timeout: 3000 });
+          if (serveStatus && !serveStatus.includes('No serve config')) {
+            routes = serveStatus.split('\n').filter(l => l.includes('http')).map(l => l.trim());
+          }
+        } catch {}
+        res.end(JSON.stringify({
+          hostname: self.HostName || 'unknown',
+          ip: self.TailscaleIPs?.[0] || 'unknown',
+          online: self.Online || false,
+          peers,
+          routes
+        }));
+      } catch (e) {
+        res.end(JSON.stringify({ error: 'Tailscale not available', hostname: '--', ip: '--', online: false, peers: 0, routes: [] }));
+      }
+      return;
+    }
+    if (req.url === '/api/lifetime-stats') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      try {
+        const now = Date.now();
+        const cacheKey = 'lifetimeStats';
+        const cacheTime = global[cacheKey + 'Time'] || 0;
+        if (global[cacheKey] && now - cacheTime < 300000) {
+          res.end(JSON.stringify(global[cacheKey]));
+          return;
+        }
+        const files = fs.readdirSync(sessDir).filter(f => f.endsWith('.jsonl'));
+        let totalTokens = 0, totalMessages = 0, totalCost = 0, totalSessions = files.length;
+        let firstSessionDate = null;
+        const activeDays = new Set();
+        for (const file of files) {
+          const lines = fs.readFileSync(path.join(sessDir, file), 'utf8').split('\n');
+          for (const line of lines) {
+            if (!line.trim()) continue;
+            try {
+              const d = JSON.parse(line);
+              if (d.type !== 'message') continue;
+              totalMessages++;
+              const msg = d.message;
+              if (msg?.usage) {
+                const inTok = (msg.usage.input || 0) + (msg.usage.cacheRead || 0) + (msg.usage.cacheWrite || 0);
+                const outTok = msg.usage.output || 0;
+                totalTokens += inTok + outTok;
+                totalCost += msg.usage.cost?.total || 0;
+              }
+              if (d.timestamp) {
+                const ts = new Date(d.timestamp).getTime();
+                if (!firstSessionDate || ts < firstSessionDate) firstSessionDate = ts;
+                const day = d.timestamp.substring(0, 10);
+                activeDays.add(day);
+              }
+            } catch {}
+          }
+        }
+        const result = {
+          totalTokens,
+          totalMessages,
+          totalCost: Math.round(totalCost * 100) / 100,
+          totalSessions,
+          firstSessionDate,
+          daysActive: activeDays.size
+        };
+        global[cacheKey] = result;
+        global[cacheKey + 'Time'] = now;
+        res.end(JSON.stringify(result));
+      } catch (e) {
+        res.end(JSON.stringify({ totalTokens: 0, totalMessages: 0, totalCost: 0, totalSessions: 0, firstSessionDate: null, daysActive: 0 }));
+      }
+      return;
+    }
+    if (req.url === '/api/health-history') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(healthHistory));
+      return;
+    }
+    if (req.url === '/api/memory-files') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(getMemoryFiles()));
+      return;
+    }
+    if (req.url.startsWith('/api/memory-file?')) {
+      try {
+        const params = new URL(req.url, 'http://localhost').searchParams;
+        const fname = params.get('path') || '';
+        let fpath = '';
+        if (fname === 'MEMORY.md') fpath = memoryMdPath;
+        else if (fname === 'HEARTBEAT.md') fpath = heartbeatPath;
+        else if (fname.startsWith('memory/') && !fname.includes('..')) fpath = path.join(WORKSPACE_DIR, fname);
+        else throw new Error('Invalid path');
+        
+        if (fs.existsSync(fpath)) {
+          const content = fs.readFileSync(fpath, 'utf8');
+          res.writeHead(200, { 'Content-Type': 'text/plain' });
+          res.end(content);
+        } else {
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.end('File not found');
+        }
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'text/plain' });
+        res.end('Bad request');
+      }
+      return;
+    }
+    if (req.url === '/api/key-files') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      res.end(JSON.stringify(getKeyFiles()));
+      return;
+    }
+    if (req.url.startsWith('/api/key-file') && req.method === 'GET') {
+      try {
+        const params = new URL(req.url, 'http://localhost').searchParams;
+        const name = params.get('path') || '';
+        const allowed = buildKeyFilesAllowed();
+        if (!allowed[name]) {
+          res.writeHead(403, { 'Content-Type': 'text/plain' });
+          res.end('Forbidden');
+          return;
+        }
+        const fpath = allowed[name];
+        if (!fs.existsSync(fpath)) {
+          res.writeHead(404, { 'Content-Type': 'text/plain' });
+          res.end('File not found');
+          return;
+        }
+        const content = fs.readFileSync(fpath, 'utf8');
+        res.writeHead(200, { 'Content-Type': 'text/plain' });
+        res.end(content);
+      } catch (e) {
+        res.writeHead(400, { 'Content-Type': 'text/plain' });
+        res.end('Bad request');
+      }
+      return;
+    }
+    if (req.url === '/api/key-file' && req.method === 'POST') {
+      let body = '';
+      let overflow = false;
+      req.on('data', chunk => {
+        body += chunk;
+        if (body.length > MAX_FILE_BODY) { overflow = true; req.destroy(); }
+      });
+      req.on('end', () => {
+        if (overflow) {
+          res.writeHead(413, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Payload too large (max 1MB)' }));
+          return;
+        }
+        try {
+          const { path: name, content } = JSON.parse(body);
+          if (typeof name !== 'string' || typeof content !== 'string') {
+            res.writeHead(400, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Invalid request body' }));
+            return;
+          }
+          if (READ_ONLY_FILES.has(name)) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'File is read-only' }));
+            return;
+          }
+          const allowed = buildKeyFilesAllowed();
+          if (!allowed[name]) {
+            res.writeHead(403, { 'Content-Type': 'application/json' });
+            res.end(JSON.stringify({ error: 'Forbidden' }));
+            return;
+          }
+          const fpath = allowed[name];
+          auditLog('file_edit', ip, { file: name });
+          try {
+            if (fs.existsSync(fpath)) {
+              fs.copyFileSync(fpath, fpath + '.bak');
+            }
+          } catch {}
+          const tmp = fpath + '.tmp.' + Date.now();
+          fs.writeFileSync(tmp, content, 'utf8');
+          fs.renameSync(tmp, fpath);
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true }));
+        } catch (e) {
+          res.writeHead(500, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: e.message }));
+        }
+      });
+      return;
+    }
+    if (req.url.startsWith('/api/cron/') && req.method === 'POST') {
+      try {
+        const parts = req.url.split('/');
+        const action = parts[parts.length - 1];
+        const id = parts[parts.length - 2].replace(/[^a-zA-Z0-9\-_]/g, '');
+        if (!id) { res.writeHead(400); res.end('Invalid id'); return; }
+        
+        if (action === 'toggle') {
+          const { execSync } = require('child_process');
+          if (!fs.existsSync(cronFile)) throw new Error('No cron file');
+          const data = JSON.parse(fs.readFileSync(cronFile, 'utf8'));
+          const job = (data.jobs || []).find(j => j.id === id);
+          if (!job) throw new Error('Job not found');
+          job.enabled = !job.enabled;
+          fs.writeFileSync(cronFile, JSON.stringify(data, null, 2));
+          auditLog('cron_toggle', ip, { cronId: id, enabled: job.enabled });
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true, enabled: job.enabled }));
+        } else if (action === 'run') {
+          exec(`openclaw cron run ${id}`, { timeout: 60000 }, (err) => {});
+          res.writeHead(200, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ success: true }));
+        } else {
+          res.writeHead(404);
+          res.end('Not found');
+        }
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+      return;
+    }
+    if (req.url === '/api/live') {
+      res.writeHead(200, {
+        'Content-Type': 'text/event-stream',
+        'Cache-Control': 'no-cache',
+        'Connection': 'keep-alive'
+      });
+      
+      liveClients.push(res);
+      startLiveWatcher();
+      
+      res.write('data: {"status":"connected"}\n\n');
+      
+      try {
+        const cutoff = Date.now() - 3600000;
+        const files = fs.readdirSync(sessDir).filter(f => {
+          if (!f.endsWith('.jsonl')) return false;
+          try { return fs.statSync(path.join(sessDir, f)).mtimeMs > cutoff; } catch { return false; }
+        });
+        const recentEvents = [];
+        files.forEach(file => {
+          const sessionKey = file.replace('.jsonl', '');
+          const content = fs.readFileSync(path.join(sessDir, file), 'utf8');
+          const lines = content.split('\n').filter(l => l.trim());
+          lines.slice(-5).forEach(line => {
+            try {
+              const data = JSON.parse(line);
+              data._sessionKey = sessionKey;
+              const event = formatLiveEvent(data);
+              if (event) recentEvents.push(event);
+            } catch {}
+          });
+        });
+        recentEvents.sort((a, b) => new Date(b.timestamp) - new Date(a.timestamp));
+        recentEvents.slice(0, 20).forEach(event => {
+          res.write(`data: ${JSON.stringify(event)}\n\n`);
+        });
+      } catch {}
+      
+      req.on('close', () => {
+        liveClients = liveClients.filter(client => client !== res);
+        if (liveClients.length === 0) {
+          if (liveWatcher) { try { liveWatcher.close(); } catch {} liveWatcher = null; }
+          Object.keys(_fileWatchers).forEach(k => { try { _fileWatchers[k].close(); } catch {} delete _fileWatchers[k]; });
+        }
+      });
+      
+      return;
+    }
   }
+
   try {
     const html = fs.readFileSync(htmlPath, 'utf8');
     res.writeHead(200, { 'Content-Type': 'text/html' });
@@ -1567,5 +1747,4 @@ const server = http.createServer((req, res) => {
 
 server.listen(PORT, '0.0.0.0', () => {
   console.log('Dashboard: http://0.0.0.0:' + PORT);
-  // Usage scrape on-demand only (triggered via API)
 });
