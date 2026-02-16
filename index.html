@@ -1947,8 +1947,13 @@ body {
             <div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:8px;">Or enter this secret manually:</div>
             <div style="padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:14px;word-break:break-all;" id="mfaSecretDisplay"></div>
           </div>
-          <button onclick="completeMFASetup()" style="padding:12px 24px;background:linear-gradient(135deg,var(--accent),var(--purple));color:white;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-size:14px;">
-            ✅ Done
+          <div style="margin-bottom:16px;">
+            <div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:8px;">Enter the 6-digit code from your authenticator app to verify:</div>
+            <input type="text" id="mfaVerifyCode" placeholder="000000" maxlength="6" pattern="[0-9]{6}" inputmode="numeric" style="width:200px;padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:18px;font-family:'JetBrains Mono',monospace;text-align:center;letter-spacing:0.5em;">
+            <div id="mfaVerifyError" style="display:none;color:var(--red);font-size:12px;margin-top:8px;"></div>
+          </div>
+          <button onclick="confirmMFASetup()" id="confirmMfaBtn" style="padding:12px 24px;background:linear-gradient(135deg,var(--accent),var(--purple));color:white;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-size:14px;">
+            ✅ Verify & Enable
           </button>
           <button onclick="cancelMFASetup()" style="padding:12px 24px;background:var(--bg-tertiary);color:var(--text-secondary);border:1px solid var(--border);border-radius:8px;font-weight:600;cursor:pointer;font-size:14px;margin-left:12px;">
             Cancel
@@ -2829,16 +2834,53 @@ async function setupMFA() {
   }
 }
 
-function completeMFASetup() {
-  document.getElementById('mfaSetupView').style.display = 'none';
-  checkMFAStatus();
+async function confirmMFASetup() {
+  const code = document.getElementById('mfaVerifyCode').value.trim();
+  const errorEl = document.getElementById('mfaVerifyError');
+  const btn = document.getElementById('confirmMfaBtn');
+  errorEl.style.display = 'none';
+  
+  if (!code || code.length !== 6) {
+    errorEl.textContent = 'Enter the 6-digit code from your authenticator app.';
+    errorEl.style.display = 'block';
+    return;
+  }
+  
+  btn.disabled = true;
+  btn.textContent = 'Verifying...';
+  
+  try {
+    const res = await authFetch(API_BASE + '/api/auth/confirm-mfa', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ totpCode: code })
+    });
+    const data = await res.json();
+    
+    if (res.ok && data.success) {
+      showToast('MFA enabled successfully!', 'success');
+      document.getElementById('mfaSetupView').style.display = 'none';
+      document.getElementById('mfaVerifyCode').value = '';
+      checkMFAStatus();
+    } else {
+      errorEl.textContent = data.error || 'Invalid code. Try again.';
+      errorEl.style.display = 'block';
+      document.getElementById('mfaVerifyCode').value = '';
+      document.getElementById('mfaVerifyCode').focus();
+    }
+  } catch (err) {
+    errorEl.textContent = 'Verification failed. Try again.';
+    errorEl.style.display = 'block';
+  }
+  
+  btn.disabled = false;
+  btn.textContent = '✅ Verify & Enable';
 }
 
 function cancelMFASetup() {
-  if (confirm('Cancel MFA setup? The secret will remain enabled.')) {
-    document.getElementById('mfaSetupView').style.display = 'none';
-    checkMFAStatus();
-  }
+  document.getElementById('mfaSetupView').style.display = 'none';
+  document.getElementById('mfaVerifyCode').value = '';
+  checkMFAStatus();
 }
 
 async function disableMFA() {

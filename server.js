@@ -178,6 +178,7 @@ function verifyTOTP(secret, code) {
 }
 
 const rateLimitStore = new Map();
+const pendingMfaSecrets = new Map();
 const MAX_FILE_BODY = 1024 * 1024;
 const READ_ONLY_FILES = new Set(['openclaw-gateway.service', 'openclaw-config.json']);
 
@@ -1568,20 +1569,55 @@ const server = http.createServer((req, res) => {
     try {
       const secret = base32Encode(crypto.randomBytes(20));
       const otpauth_uri = `otpauth://totp/OpenClaw%20Dashboard?secret=${secret}&issuer=OpenClaw`;
-      
-      const creds = getCredentials();
-      if (creds) {
-        creds.mfaSecret = secret;
-        saveCredentials(creds);
-      }
-      
-      auditLog('mfa_setup', getClientIP(req));
+      pendingMfaSecrets.set(getClientIP(req), { secret, createdAt: Date.now() });
       res.writeHead(200, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ secret, otpauth_uri }));
     } catch (e) {
       res.writeHead(500, { 'Content-Type': 'application/json' });
       res.end(JSON.stringify({ error: e.message }));
     }
+    return;
+  }
+
+  if (req.url === '/api/auth/confirm-mfa' && req.method === 'POST') {
+    if (!requireAuth(req, res)) return;
+    setSameSiteCORS(req, res);
+    
+    let body = '';
+    req.on('data', chunk => { body += chunk; if (body.length > 1024) req.destroy(); });
+    req.on('end', () => {
+      try {
+        const { totpCode } = JSON.parse(body);
+        const ip = getClientIP(req);
+        const pending = pendingMfaSecrets.get(ip);
+        
+        if (!pending || Date.now() - pending.createdAt > 10 * 60 * 1000) {
+          pendingMfaSecrets.delete(ip);
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'MFA setup expired. Please try again.' }));
+          return;
+        }
+        
+        if (!totpCode || !verifyTOTP(pending.secret, totpCode)) {
+          res.writeHead(400, { 'Content-Type': 'application/json' });
+          res.end(JSON.stringify({ error: 'Invalid TOTP code. Please try again.' }));
+          return;
+        }
+        
+        const creds = getCredentials();
+        if (creds) {
+          creds.mfaSecret = pending.secret;
+          saveCredentials(creds);
+        }
+        pendingMfaSecrets.delete(ip);
+        auditLog('mfa_setup', ip);
+        res.writeHead(200, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ success: true }));
+      } catch (e) {
+        res.writeHead(500, { 'Content-Type': 'application/json' });
+        res.end(JSON.stringify({ error: e.message }));
+      }
+    });
     return;
   }
 
