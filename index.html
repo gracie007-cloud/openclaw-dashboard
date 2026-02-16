@@ -2429,11 +2429,14 @@ async function checkAuth() {
     
     if (statusData.registered === false) {
       showRegistrationForm();
+      showLogin();
     } else {
       showLoginForm();
+      showLogin();
     }
   } catch (err) {
     showLoginForm();
+    showLogin();
   }
 }
 
