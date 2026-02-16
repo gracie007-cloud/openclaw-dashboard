@@ -1282,14 +1282,14 @@ body {
             </div>
             <div id="ramSparkline" style="margin-top:8px;"></div>
           </div>
-          <div class="system-metric">
+          <div class="system-metric" title="CPU temperature. On Mac, install osx-cpu-temp (brew install osx-cpu-temp) for a reading.">
             <div class="radial-gauge">
               <svg viewBox="0 0 120 120">
                 <circle class="radial-gauge-bg" cx="60" cy="60" r="52"/>
                 <circle class="radial-gauge-fill" cx="60" cy="60" r="52" id="tempCircle" style="stroke: var(--yellow); stroke-dasharray: 326.73; stroke-dashoffset: 326.73"/>
               </svg>
               <div class="radial-gauge-label">
-                <span class="radial-gauge-value" id="systemTemp">--</span>
+                <span class="radial-gauge-value" id="systemTemp">N/A</span>
                 <span class="radial-gauge-text">TEMP</span>
               </div>
             </div>
@@ -2004,12 +2004,13 @@ function updateOverview() {
     }
     
     const temp = systemStats.cpu.temp;
-    if (temp !== null) {
+    if (temp !== null && temp !== undefined) {
       const tempPct = Math.min((temp / 90) * 100, 100);
       document.getElementById('systemTemp').textContent = temp.toFixed(0) + '°';
       updateRadialGauge('tempCircle', tempPct);
     } else {
-      document.getElementById('systemTemp').textContent = '--';
+      document.getElementById('systemTemp').textContent = 'N/A';
+      updateRadialGauge('tempCircle', 0);
     }
     
     const uptime = systemStats.uptime || 0;
@@ -3012,13 +3013,18 @@ async function fetchNewData() {
     const tokens = await tokRes.json();
     const rt = await rtRes.json();
 
-    document.getElementById('servicesStatus').innerHTML = services.map(s =>
-      `<div style="display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--border);">
-        <span style="width:10px;height:10px;border-radius:50%;background:${s.active ? 'var(--green)' : 'var(--red)'};box-shadow:0 0 8px ${s.active ? 'var(--green-glow)' : 'rgba(239,68,68,0.3)'};"></span>
+    document.getElementById('servicesStatus').innerHTML = services.map((s, i) => {
+      const isLast = i === services.length - 1;
+      const border = isLast ? 'none' : '1px solid var(--border)';
+      const status = s.active === null ? 'N/A' : (s.active ? 'Running' : 'Stopped');
+      const dotColor = s.active === null ? 'var(--text-muted)' : (s.active ? 'var(--green)' : 'var(--red)');
+      const textColor = s.active === null ? 'var(--text-muted)' : (s.active ? 'var(--green)' : 'var(--red)');
+      return `<div style="display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:${border};">
+        <span style="width:10px;height:10px;border-radius:50%;background:${dotColor};flex-shrink:0;"></span>
         <span style="font-weight:600;font-size:14px;">${s.name}</span>
-        <span style="margin-left:auto;font-size:12px;color:${s.active ? 'var(--green)' : 'var(--red)'};">${s.active ? 'Running' : 'Stopped'}</span>
-      </div>`
-    ).join('') || '<div class="empty-state-text">No services</div>';
+        <span style="margin-left:auto;font-size:12px;color:${textColor};">${status}</span>
+      </div>`;
+    }).join('') || '<div class="empty-state-text">No services</div>';
 
     const now = Date.now();
     document.getElementById('cronJobs').innerHTML = crons.map(c => {

@@ -431,19 +431,70 @@ function getRateLimitEvents() {
 let usageCache = null;
 let usageCacheTime = 0;
 
+// On macOS, os.freemem() is tiny (most RAM is "file cache"), so (total - free) ≈ 100%.
+// Use vm_stat to get active + wired = memory actually in use for a sensible percentage.
+function getMemoryStats() {
+  const totalMem = os.totalmem();
+  if (process.platform !== 'darwin') {
+    const freeMem = os.freemem();
+    const usedMem = totalMem - freeMem;
+    return { total: totalMem, used: usedMem, free: freeMem, percent: Math.round((usedMem / totalMem) * 100) };
+  }
+  try {
+    const { execSync } = require('child_process');
+    const out = execSync('vm_stat', { encoding: 'utf8', timeout: 2000 });
+    let pageSize = 4096;
+    const pageSizeMatch = out.match(/page size of (\d+) bytes/);
+    if (pageSizeMatch) pageSize = parseInt(pageSizeMatch[1], 10);
+    const num = (name) => {
+      const m = out.match(new RegExp(name + ':\\s*(\\d+)'));
+      return m ? parseInt(m[1], 10) * pageSize : 0;
+    };
+    const free = num('Pages free');
+    const active = num('Pages active');
+    const inactive = num('Pages inactive');
+    const wired = num('Pages wired');
+    const compressed = num('Pages occupied by compressor');
+    const usedMem = active + wired + (compressed || 0);
+    const availMem = free + inactive;
+    const usedDisplay = Math.min(usedMem, totalMem - free);
+    const memPercent = totalMem > 0 ? Math.min(100, Math.round((usedDisplay / totalMem) * 100)) : 0;
+    return {
+      total: totalMem,
+      used: usedDisplay,
+      free: free,
+      percent: memPercent
+    };
+  } catch (e) {
+    const freeMem = os.freemem();
+    const usedMem = totalMem - freeMem;
+    return { total: totalMem, used: usedMem, free: freeMem, percent: Math.round((usedMem / totalMem) * 100) };
+  }
+}
+
 // System stats
 function getSystemStats() {
   try {
-    const totalMem = os.totalmem();
-    const freeMem = os.freemem();
-    const usedMem = totalMem - freeMem;
-    const memPercent = Math.round((usedMem / totalMem) * 100);
+    const mem = getMemoryStats();
+    const totalMem = mem.total;
+    const usedMem = mem.used;
+    const freeMem = mem.free;
+    const memPercent = mem.percent;
 
     let cpuTemp = null;
-    try {
-      const tempRaw = fs.readFileSync('/sys/class/thermal/thermal_zone0/temp', 'utf8').trim();
-      cpuTemp = parseInt(tempRaw) / 1000;
-    } catch {}
+    if (process.platform === 'linux') {
+      try {
+        const tempRaw = fs.readFileSync('/sys/class/thermal/thermal_zone0/temp', 'utf8').trim();
+        cpuTemp = parseInt(tempRaw, 10) / 1000;
+      } catch {}
+    } else if (process.platform === 'darwin') {
+      try {
+        const { execSync } = require('child_process');
+        const out = execSync('osx-cpu-temp 2>/dev/null || true', { encoding: 'utf8', timeout: 2000 }).trim();
+        const match = out.match(/(\d+(?:\.\d+)?)/);
+        if (match) cpuTemp = parseFloat(match[1]);
+      } catch {}
+    }
 
     const loadAvg = os.loadavg();
     const uptime = os.uptime();
@@ -460,26 +511,40 @@ function getSystemStats() {
     let diskPercent = 0, diskUsed = '', diskTotal = '';
     try {
       const { execSync } = require('child_process');
-      const df = execSync("df / --output=pcent,used,size -B1G | tail -1", { encoding: 'utf8' }).trim();
-      const parts = df.split(/\s+/);
-      diskPercent = parseInt(parts[0]);
-      diskUsed = parts[1] + 'G';
-      diskTotal = parts[2] + 'G';
+      if (process.platform === 'darwin') {
+        const df = execSync("df -g / | tail -1", { encoding: 'utf8' }).trim();
+        const parts = df.split(/\s+/).filter(Boolean);
+        if (parts.length >= 5) {
+          const totalGB = parseInt(parts[1], 10) || 0;
+          const usedGB = parseInt(parts[2], 10) || 0;
+          const pctStr = parts[4].replace('%', '');
+          diskPercent = parseInt(pctStr, 10) || 0;
+          diskUsed = usedGB + 'G';
+          diskTotal = totalGB + 'G';
+        }
+      } else {
+        const df = execSync("df / --output=pcent,used,size -B1G | tail -1", { encoding: 'utf8' }).trim();
+        const parts = df.split(/\s+/);
+        diskPercent = parseInt(parts[0], 10) || 0;
+        diskUsed = (parts[1] || '') + 'G';
+        diskTotal = (parts[2] || '') + 'G';
+      }
     } catch {}
 
     let crashCount = 0;
-    try {
-      const { execSync } = require('child_process');
-      const logs = execSync("journalctl -u openclaw --since '7 days ago' --no-pager -o short 2>/dev/null | grep -ci 'SIGABRT\\|SIGSEGV\\|exit code [1-9]\\|process crashed\\|fatal error' || echo 0", { encoding: 'utf8' }).trim();
-      crashCount = parseInt(logs) || 0;
-    } catch {}
-
     let crashesToday = 0;
-    try {
-      const { execSync } = require('child_process');
-      const logs = execSync("journalctl -u openclaw --since today --no-pager -o short 2>/dev/null | grep -ci 'SIGABRT\\|SIGSEGV\\|exit code [1-9]\\|process crashed\\|fatal error' || echo 0", { encoding: 'utf8' }).trim();
-      crashesToday = parseInt(logs) || 0;
-    } catch {}
+    if (process.platform === 'linux') {
+      try {
+        const { execSync } = require('child_process');
+        const logs = execSync("journalctl -u openclaw --since '7 days ago' --no-pager -o short 2>/dev/null | grep -ci 'SIGABRT\\|SIGSEGV\\|exit code [1-9]\\|process crashed\\|fatal error' || echo 0", { encoding: 'utf8' }).trim();
+        crashCount = parseInt(logs, 10) || 0;
+      } catch {}
+      try {
+        const { execSync } = require('child_process');
+        const logs = execSync("journalctl -u openclaw --since today --no-pager -o short 2>/dev/null | grep -ci 'SIGABRT\\|SIGSEGV\\|exit code [1-9]\\|process crashed\\|fatal error' || echo 0", { encoding: 'utf8' }).trim();
+        crashesToday = parseInt(logs, 10) || 0;
+      } catch {}
+    }
 
     return {
       cpu: { usage: cpuUsage, temp: cpuTemp },
@@ -677,12 +742,64 @@ function getGitActivity() {
 function getServicesStatus() {
   const { execSync } = require('child_process');
   const services = ['openclaw', 'agent-dashboard', 'tailscaled'];
-  return services.map(name => {
+
+  if (os.platform() === 'linux') {
+    return services.map(name => {
+      try {
+        const status = execSync(`systemctl is-active ${name} 2>/dev/null`, { encoding: 'utf8', timeout: 3000 }).trim();
+        return { name, active: status === 'active' };
+      } catch { return { name, active: false }; }
+    });
+  }
+
+  if (os.platform() === 'darwin') {
+    // agent-dashboard = gateway web UI; check if it's reachable at localhost:18789
+    const gatewayUrl = process.env.GATEWAY_DASHBOARD_URL || 'http://localhost:18789';
+    let agentDashboardActive = false;
     try {
-      const status = execSync(`systemctl is-active ${name} 2>/dev/null`, { encoding: 'utf8', timeout: 3000 }).trim();
-      return { name, active: status === 'active' };
-    } catch { return { name, active: false }; }
-  });
+      const code = execSync(`curl -s -o /dev/null -w "%{http_code}" --connect-timeout 2 --max-time 3 "${gatewayUrl}" 2>/dev/null`, { encoding: 'utf8', timeout: 5000 }).trim();
+      agentDashboardActive = code.length >= 1 && (code[0] === '2' || code[0] === '3');
+    } catch { /* unreachable or no curl */ }
+
+    // tailscaled on macOS: CLI is often the app bundle (shell "tailscale" may be an alias Node doesn't see).
+    // Try app bundle path first, then PATH; exit 0 = daemon up.
+    let tailscaledActive = false;
+    const tailscalePaths = ['/Applications/Tailscale.app/Contents/MacOS/Tailscale', 'tailscale'];
+    for (const t of tailscalePaths) {
+      try {
+        execSync(`${t} status 2>/dev/null`, { encoding: 'utf8', timeout: 3000 });
+        tailscaledActive = true;
+        break;
+      } catch { /* try next */ }
+    }
+
+    // openclaw: check user launchctl (first column PID, last column label)
+    let listOut = '';
+    try {
+      listOut = execSync('launchctl list 2>/dev/null', { encoding: 'utf8', timeout: 3000 });
+    } catch { listOut = ''; }
+    const runningLabels = new Set();
+    for (const line of listOut.split('\n')) {
+      const trimmed = line.trim();
+      if (!trimmed) continue;
+      const cols = trimmed.split(/\s+/);
+      const pid = cols[0];
+      const label = cols.length >= 3 ? cols[cols.length - 1] : '';
+      if (pid !== '-' && pid !== '0' && label) runningLabels.add(label.toLowerCase());
+    }
+    const openclawActive = Array.from(runningLabels).some(label =>
+      label === 'openclaw' || label.includes('openclaw')
+    );
+
+    return services.map(name => {
+      if (name === 'agent-dashboard') return { name, active: agentDashboardActive };
+      if (name === 'tailscaled') return { name, active: tailscaledActive };
+      return { name, active: openclawActive };
+    });
+  }
+
+  // Other platforms: no system service manager we support
+  return services.map(name => ({ name, active: null }));
 }
 
 function getMemoryFiles() {
@@ -967,6 +1084,11 @@ const server = http.createServer((req, res) => {
       if (!allowedServices.includes(service)) {
         res.writeHead(400, { 'Content-Type': 'text/plain' });
         res.end('Invalid service name');
+        return;
+      }
+      if (process.platform !== 'linux') {
+        res.writeHead(200, { 'Content-Type': 'text/plain', 'Access-Control-Allow-Origin': '*' });
+        res.end('Logs (journalctl) are only available on Linux.\nOn macOS use Console.app or: log show --predicate \'processImagePath contains "openclaw"\' --last 1h');
         return;
       }
       const lines = Math.min(Math.max(parseInt(params.get('lines')) || 100, 1), 1000);
