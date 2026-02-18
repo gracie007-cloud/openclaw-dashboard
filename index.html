@@ -100,15 +100,19 @@ body {
 
 .nav {
   flex: 1;
-  padding: 16px 8px;
+  padding: 16px 0;
   overflow-y: auto;
+}
+.sidebar:hover .nav {
+  padding: 16px 8px;
 }
 
 .nav-item {
   display: flex;
   align-items: center;
   gap: 12px;
-  padding: 14px 16px;
+  padding: 14px 0;
+  justify-content: center;
   border-radius: 8px;
   cursor: pointer;
   transition: all 0.2s cubic-bezier(0.4, 0, 0.2, 1);
@@ -126,6 +130,10 @@ body {
   color: var(--text-primary);
   box-shadow: 0 2px 8px rgba(0,0,0,0.2);
 }
+.sidebar:hover .nav-item {
+  justify-content: flex-start;
+  padding: 14px 16px;
+}
 
 .nav-item.active {
   background: linear-gradient(135deg, rgba(99, 102, 241, 0.15), rgba(139, 92, 246, 0.15));
@@ -141,12 +149,11 @@ body {
 }
 
 .nav-text {
-  opacity: 0;
-  transition: opacity 0.3s;
+  display: none;
 }
 
 .sidebar:hover .nav-text {
-  opacity: 1;
+  display: inline;
 }
 
 .main {
@@ -1167,7 +1174,74 @@ body {
 </head>
 <body>
 
-<div class="app">
+<div id="loginPage" style="display:none;position:fixed;inset:0;background:var(--bg-primary);z-index:9999;align-items:center;justify-content:center;">
+  <div style="max-width:400px;width:90%;background:var(--bg-card);border:1px solid var(--border);border-radius:16px;padding:40px;box-shadow:0 8px 32px rgba(0,0,0,0.3);">
+    <div style="text-align:center;margin-bottom:32px;">
+      <div style="font-size:48px;margin-bottom:16px;">🔐</div>
+      <h1 style="font-size:24px;font-weight:700;margin-bottom:8px;background:linear-gradient(135deg, var(--text-primary), var(--accent));-webkit-background-clip:text;-webkit-text-fill-color:transparent;background-clip:text;" id="authTitle">Dashboard Login</h1>
+      <p style="color:var(--text-secondary);font-size:14px;" id="authSubtitle">Enter your credentials</p>
+    </div>
+    
+    <form id="registerForm" style="display:none;" onsubmit="return handleRegister(event)">
+      <div style="margin-bottom:16px;">
+        <input type="text" id="regUsername" placeholder="Username" style="width:100%;padding:14px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:14px;" autocomplete="username" required>
+      </div>
+      <div style="margin-bottom:16px;">
+        <input type="password" id="regPassword" placeholder="Password" style="width:100%;padding:14px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:14px;" autocomplete="new-password" required minlength="8">
+      </div>
+      <div style="margin-bottom:16px;">
+        <input type="password" id="regPasswordConfirm" placeholder="Confirm Password" style="width:100%;padding:14px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:14px;" autocomplete="new-password" required>
+      </div>
+      <div style="margin-bottom:20px;">
+        <div style="height:6px;background:var(--bg-primary);border-radius:3px;overflow:hidden;">
+          <div id="passwordStrengthBar" style="height:100%;width:0%;transition:all 0.3s;border-radius:3px;"></div>
+        </div>
+        <div id="passwordStrengthText" style="font-size:11px;color:var(--text-muted);margin-top:4px;">Password must be 8+ chars with at least 1 letter and 1 number</div>
+      </div>
+      <div id="registerError" style="display:none;color:var(--red);font-size:13px;margin-bottom:16px;padding:12px;background:rgba(239,68,68,0.1);border-radius:6px;border:1px solid rgba(239,68,68,0.3);"></div>
+      <button type="submit" id="registerBtn" style="width:100%;padding:14px;background:linear-gradient(135deg, var(--accent), var(--purple));color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;transition:all 0.2s;">Create Account</button>
+    </form>
+    
+    <form id="loginForm" style="display:none;" onsubmit="return handleLogin(event)">
+      <div style="margin-bottom:16px;" id="usernameInputContainer">
+        <input type="text" id="username" placeholder="Username" style="width:100%;padding:14px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:14px;" autocomplete="username" required>
+      </div>
+      <div style="margin-bottom:16px;" id="passwordInputContainer">
+        <input type="password" id="password" placeholder="Password" style="width:100%;padding:14px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:14px;" autocomplete="current-password" required>
+      </div>
+      <div style="margin-bottom:16px;display:none;" id="totpInputContainer">
+        <input type="text" id="totpInput" placeholder="6-digit code" maxlength="6" pattern="[0-9]{6}" style="width:100%;padding:14px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:14px;font-family:'JetBrains Mono',monospace;text-align:center;letter-spacing:0.5em;" autocomplete="off" inputmode="numeric">
+      </div>
+      <div style="margin-bottom:16px;display:flex;align-items:center;gap:8px;">
+        <input type="checkbox" id="rememberMeCheckbox" style="width:16px;height:16px;cursor:pointer;">
+        <label for="rememberMeCheckbox" style="color:var(--text-secondary);font-size:14px;cursor:pointer;">Remember me (3 hours)</label>
+      </div>
+      <div id="loginError" style="display:none;color:var(--red);font-size:13px;margin-bottom:16px;padding:12px;background:rgba(239,68,68,0.1);border-radius:6px;border:1px solid rgba(239,68,68,0.3);"></div>
+      <button type="submit" id="loginBtn" style="width:100%;padding:14px;background:linear-gradient(135deg, var(--accent), var(--purple));color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;transition:all 0.2s;">Login</button>
+      <div style="text-align:center;margin-top:16px;">
+        <a href="#" onclick="showRecoveryForm();return false;" style="color:var(--accent);font-size:13px;text-decoration:none;">Forgot password?</a>
+      </div>
+    </form>
+    
+    <form id="recoveryForm" style="display:none;" onsubmit="return handleRecovery(event)">
+      <div style="margin-bottom:16px;">
+        <input type="text" id="recoveryToken" placeholder="Recovery Token" style="width:100%;padding:14px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:14px;font-family:'JetBrains Mono',monospace;" required>
+        <div style="font-size:11px;color:var(--text-muted);margin-top:4px;">Check your server console or environment variables</div>
+      </div>
+      <div style="margin-bottom:16px;">
+        <input type="password" id="recoveryNewPassword" placeholder="New Password" style="width:100%;padding:14px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:14px;" required minlength="8">
+      </div>
+      <div style="margin-bottom:20px;">
+        <input type="password" id="recoveryNewPasswordConfirm" placeholder="Confirm New Password" style="width:100%;padding:14px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:14px;" required>
+      </div>
+      <div id="recoveryError" style="display:none;color:var(--red);font-size:13px;margin-bottom:16px;padding:12px;background:rgba(239,68,68,0.1);border-radius:6px;border:1px solid rgba(239,68,68,0.3);"></div>
+      <button type="submit" id="recoveryBtn" style="width:100%;padding:14px;background:linear-gradient(135deg, var(--accent), var(--purple));color:#fff;border:none;border-radius:8px;font-size:15px;font-weight:600;cursor:pointer;transition:all 0.2s;margin-bottom:12px;">Reset Password</button>
+      <button type="button" onclick="showLoginForm()" style="width:100%;padding:12px;background:var(--bg-secondary);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;font-size:14px;font-weight:500;cursor:pointer;">← Back to Login</button>
+    </form>
+  </div>
+</div>
+
+<div class="app" id="mainApp" style="display:none;">
   <aside class="sidebar">
     <div class="sidebar-header">
       <div class="logo">✨</div>
@@ -1194,6 +1268,10 @@ body {
         <span class="icon">🧠</span>
         <span class="nav-text">Memory</span>
       </div>
+      <div class="nav-item" data-page="files">
+        <span class="icon">📁</span>
+        <span class="nav-text">Files</span>
+      </div>
       <div class="nav-item" data-page="logs">
         <span class="icon">📋</span>
         <span class="nav-text">Logs</span>
@@ -1202,7 +1280,18 @@ body {
         <span class="icon">⚡</span>
         <span class="nav-text">Live Feed</span>
       </div>
+      <div class="nav-item" data-page="security">
+        <span class="icon">🔒</span>
+        <span class="nav-text">Security</span>
+      </div>
     </nav>
+    <div style="padding:16px;border-top:1px solid var(--border);margin-top:auto;">
+      <div id="mfaStatusIndicator" style="padding:4px 8px;margin-bottom:8px;font-size:10px;text-align:center;border-radius:6px;display:none;white-space:nowrap;overflow:hidden;text-overflow:ellipsis;"></div>
+      <div class="nav-item" onclick="handleLogout()" style="color:var(--red);margin-bottom:0;">
+        <span class="icon">🚪</span>
+        <span class="nav-text">Logout</span>
+      </div>
+    </div>
   </aside>
 
   <main class="main">
@@ -1282,14 +1371,14 @@ body {
             </div>
             <div id="ramSparkline" style="margin-top:8px;"></div>
           </div>
-          <div class="system-metric">
+          <div class="system-metric" title="CPU temperature. On Mac, install osx-cpu-temp (brew install osx-cpu-temp) for a reading.">
             <div class="radial-gauge">
               <svg viewBox="0 0 120 120">
                 <circle class="radial-gauge-bg" cx="60" cy="60" r="52"/>
                 <circle class="radial-gauge-fill" cx="60" cy="60" r="52" id="tempCircle" style="stroke: var(--yellow); stroke-dasharray: 326.73; stroke-dashoffset: 326.73"/>
               </svg>
               <div class="radial-gauge-label">
-                <span class="radial-gauge-value" id="systemTemp">--</span>
+                <span class="radial-gauge-value" id="systemTemp">N/A</span>
                 <span class="radial-gauge-text">TEMP</span>
               </div>
             </div>
@@ -1739,6 +1828,33 @@ body {
       </div>
     </div>
 
+    <div class="page" id="files">
+      <div class="page-header">
+        <h1 class="page-title">Files</h1>
+        <p class="page-subtitle">Key workspace and config files</p>
+      </div>
+
+      <div class="grid grid-2 mb-24">
+        <div class="card">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;">
+            <h3 class="card-title" style="margin-bottom:0;flex:1;">Key Files</h3>
+            <button onclick="window.fetchKeyFiles()" style="padding:4px 10px;background:var(--bg-tertiary);color:var(--text-secondary);border:1px solid var(--border);border-radius:6px;font-size:11px;cursor:pointer;">↻ Refresh</button>
+          </div>
+          <div id="keyFilesList" style="max-height:572px;overflow-y:auto;"></div>
+        </div>
+        <div class="card">
+          <div style="display:flex;align-items:center;gap:10px;margin-bottom:12px;flex-wrap:wrap;">
+            <h3 class="card-title" id="keyFileTitle" style="margin-bottom:0;flex:1;">Select a file</h3>
+            <button id="keyFileEditBtn" onclick="window.editKeyFile()" style="display:none;padding:6px 14px;background:var(--accent);color:white;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">Edit</button>
+            <button id="keyFileSaveBtn" onclick="window.saveKeyFile()" style="display:none;padding:6px 14px;background:var(--green);color:white;border:none;border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">Save</button>
+            <button id="keyFileCancelBtn" onclick="window.cancelEditKeyFile()" style="display:none;padding:6px 14px;background:var(--bg-tertiary);color:var(--text-secondary);border:1px solid var(--border);border-radius:6px;font-size:12px;font-weight:600;cursor:pointer;">Cancel</button>
+          </div>
+          <div id="keyFileContent" style="max-height:560px;overflow-y:auto;white-space:pre-wrap;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.6;color:var(--text-primary);"></div>
+          <textarea id="keyFileEditor" style="display:none;width:100%;height:560px;background:var(--bg-primary);color:var(--text-primary);border:1px solid var(--border);border-radius:8px;padding:12px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.6;resize:vertical;"></textarea>
+        </div>
+      </div>
+    </div>
+
     <div class="page" id="logs">
       <div class="page-header">
         <h1 class="page-title">Logs</h1>
@@ -1765,6 +1881,90 @@ body {
       <div class="card">
         <div id="logViewer" style="background:var(--bg-primary);border-radius:8px;padding:16px;font-family:'JetBrains Mono',monospace;font-size:12px;line-height:1.6;color:var(--text-primary);max-height:700px;overflow-y:auto;white-space:pre-wrap;word-wrap:break-word;">
           <div style="color:var(--text-muted);">Click Refresh to load logs...</div>
+        </div>
+      </div>
+    </div>
+
+    <div class="page" id="security">
+      <div class="page-header">
+        <h1 class="page-title">Security</h1>
+        <p class="page-subtitle">Authentication and security settings</p>
+      </div>
+
+      <div class="card mb-24">
+        <div class="card-title">🔑 Change Password</div>
+        
+        <form onsubmit="return handleChangePassword(event)" style="max-width:500px;">
+          <div style="margin-bottom:16px;">
+            <input type="password" id="currentPassword" placeholder="Current Password" style="width:100%;padding:14px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:14px;" autocomplete="current-password" required>
+          </div>
+          <div style="margin-bottom:16px;">
+            <input type="password" id="newPassword" placeholder="New Password" style="width:100%;padding:14px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:14px;" autocomplete="new-password" required minlength="8">
+          </div>
+          <div style="margin-bottom:20px;">
+            <input type="password" id="newPasswordConfirm" placeholder="Confirm New Password" style="width:100%;padding:14px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:14px;" autocomplete="new-password" required>
+          </div>
+          <div id="changePasswordError" style="display:none;color:var(--red);font-size:13px;margin-bottom:16px;padding:12px;background:rgba(239,68,68,0.1);border-radius:6px;border:1px solid rgba(239,68,68,0.3);"></div>
+          <button type="submit" id="changePasswordBtn" style="padding:12px 24px;background:linear-gradient(135deg,var(--accent),var(--purple));color:white;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-size:14px;">
+            Change Password
+          </button>
+        </form>
+        
+        <div style="margin-top:16px;padding:12px;background:rgba(59,130,246,0.1);border:1px solid rgba(59,130,246,0.3);border-radius:8px;">
+          <div style="font-size:12px;color:var(--text-secondary);">
+            <strong>Forgot your password?</strong> Use the recovery token from your server console or environment variables to reset it via the login screen.
+          </div>
+        </div>
+      </div>
+
+      <div class="card">
+        <div class="card-title">🔐 Two-Factor Authentication (TOTP)</div>
+        
+        <div id="mfaDisabledView" style="display:none;">
+          <p style="color:var(--text-secondary);margin-bottom:24px;line-height:1.6;">
+            Add an extra layer of security by enabling TOTP-based two-factor authentication. 
+            You'll need an authenticator app like Google Authenticator or Authy.
+          </p>
+          <button onclick="setupMFA()" id="enableMfaBtn" style="padding:12px 24px;background:linear-gradient(135deg,var(--green),#059669);color:white;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-size:14px;">
+            ✅ Enable MFA
+          </button>
+        </div>
+
+        <div id="mfaEnabledView" style="display:none;">
+          <div style="padding:16px;background:rgba(16,185,129,0.1);border:1px solid rgba(16,185,129,0.3);border-radius:8px;margin-bottom:24px;">
+            <div style="display:flex;align-items:center;gap:12px;">
+              <span style="font-size:24px;">✅</span>
+              <div>
+                <div style="font-weight:600;color:var(--green);margin-bottom:4px;">MFA is enabled</div>
+                <div style="font-size:13px;color:var(--text-secondary);">Your account is protected with two-factor authentication</div>
+              </div>
+            </div>
+          </div>
+          <button onclick="disableMFA()" id="disableMfaBtn" style="padding:12px 24px;background:linear-gradient(135deg,var(--red),#dc2626);color:white;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-size:14px;">
+            ⚠️ Disable MFA
+          </button>
+        </div>
+
+        <div id="mfaSetupView" style="display:none;">
+          <p style="color:var(--text-secondary);margin-bottom:16px;line-height:1.6;">
+            Scan this QR code with your authenticator app:
+          </p>
+          <div id="qrCodeContainer" style="display:flex;justify-content:center;margin:24px 0;padding:24px;background:white;border-radius:12px;"></div>
+          <div style="margin-bottom:24px;">
+            <div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:8px;">Or enter this secret manually:</div>
+            <div style="padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;font-family:'JetBrains Mono',monospace;font-size:14px;word-break:break-all;" id="mfaSecretDisplay"></div>
+          </div>
+          <div style="margin-bottom:16px;">
+            <div style="font-size:13px;font-weight:600;color:var(--text-secondary);margin-bottom:8px;">Enter the 6-digit code from your authenticator app to verify:</div>
+            <input type="text" id="mfaVerifyCode" placeholder="000000" maxlength="6" pattern="[0-9]{6}" inputmode="numeric" style="width:200px;padding:12px;background:var(--bg-secondary);border:1px solid var(--border);border-radius:8px;color:var(--text-primary);font-size:18px;font-family:'JetBrains Mono',monospace;text-align:center;letter-spacing:0.5em;">
+            <div id="mfaVerifyError" style="display:none;color:var(--red);font-size:12px;margin-top:8px;"></div>
+          </div>
+          <button onclick="confirmMFASetup()" id="confirmMfaBtn" style="padding:12px 24px;background:linear-gradient(135deg,var(--accent),var(--purple));color:white;border:none;border-radius:8px;font-weight:600;cursor:pointer;font-size:14px;">
+            ✅ Verify & Enable
+          </button>
+          <button onclick="cancelMFASetup()" style="padding:12px 24px;background:var(--bg-tertiary);color:var(--text-secondary);border:1px solid var(--border);border-radius:8px;font-weight:600;cursor:pointer;font-size:14px;margin-left:12px;">
+            Cancel
+          </button>
         </div>
       </div>
     </div>
@@ -1830,6 +2030,919 @@ body {
 </div>
 
 <script>
+const API_BASE = window.location.pathname.replace(/\/+$/, '');
+const TOKEN_KEY = 'dashboardToken';
+const TOKEN_EXPIRY_KEY = 'dashboardTokenExpiry';
+const TOKEN_LIFETIME = 24 * 60 * 60 * 1000;
+const REMEMBER_ME_LIFETIME = 3 * 60 * 60 * 1000;
+
+function getStoredToken() {
+  let token = sessionStorage.getItem(TOKEN_KEY);
+  let expiry = sessionStorage.getItem(TOKEN_EXPIRY_KEY);
+  
+  if (!token || !expiry) {
+    token = localStorage.getItem(TOKEN_KEY);
+    expiry = localStorage.getItem(TOKEN_EXPIRY_KEY);
+  }
+  
+  if (token && expiry) {
+    if (Date.now() < parseInt(expiry)) {
+      return token;
+    }
+    clearStoredToken();
+  }
+  return null;
+}
+
+function setStoredToken(token, rememberMe = false) {
+  if (rememberMe) {
+    const expiry = Date.now() + REMEMBER_ME_LIFETIME;
+    localStorage.setItem(TOKEN_KEY, token);
+    localStorage.setItem(TOKEN_EXPIRY_KEY, expiry.toString());
+    sessionStorage.removeItem(TOKEN_KEY);
+    sessionStorage.removeItem(TOKEN_EXPIRY_KEY);
+  } else {
+    sessionStorage.setItem(TOKEN_KEY, token);
+    sessionStorage.setItem(TOKEN_EXPIRY_KEY, (Date.now() + TOKEN_LIFETIME).toString());
+    localStorage.removeItem(TOKEN_KEY);
+    localStorage.removeItem(TOKEN_EXPIRY_KEY);
+  }
+}
+
+function clearStoredToken() {
+  localStorage.removeItem(TOKEN_KEY);
+  localStorage.removeItem(TOKEN_EXPIRY_KEY);
+  sessionStorage.removeItem(TOKEN_KEY);
+  sessionStorage.removeItem(TOKEN_EXPIRY_KEY);
+}
+
+function showRegistrationForm() {
+  document.getElementById('authTitle').textContent = 'Create Account';
+  document.getElementById('authSubtitle').textContent = 'Set up your dashboard credentials';
+  document.getElementById('registerForm').style.display = 'block';
+  document.getElementById('loginForm').style.display = 'none';
+  document.getElementById('recoveryForm').style.display = 'none';
+  setTimeout(() => {
+    const el = document.getElementById('regUsername');
+    if (el) el.focus();
+  }, 100);
+}
+
+function showLoginForm() {
+  document.getElementById('authTitle').textContent = 'Dashboard Login';
+  document.getElementById('authSubtitle').textContent = 'Enter your credentials';
+  document.getElementById('registerForm').style.display = 'none';
+  document.getElementById('loginForm').style.display = 'block';
+  document.getElementById('recoveryForm').style.display = 'none';
+  document.getElementById('usernameInputContainer').style.display = 'block';
+  document.getElementById('passwordInputContainer').style.display = 'block';
+  document.getElementById('totpInputContainer').style.display = 'none';
+  setTimeout(() => {
+    const el = document.getElementById('username');
+    if (el) el.focus();
+  }, 100);
+}
+
+function showRecoveryForm() {
+  document.getElementById('authTitle').textContent = 'Reset Password';
+  document.getElementById('authSubtitle').textContent = 'Enter recovery token and new password';
+  document.getElementById('registerForm').style.display = 'none';
+  document.getElementById('loginForm').style.display = 'none';
+  document.getElementById('recoveryForm').style.display = 'block';
+  setTimeout(() => {
+    const el = document.getElementById('recoveryToken');
+    if (el) el.focus();
+  }, 100);
+}
+
+function calculatePasswordStrength(password) {
+  let strength = 0;
+  if (password.length >= 8) strength += 25;
+  if (password.length >= 12) strength += 15;
+  if (/[a-z]/.test(password)) strength += 15;
+  if (/[A-Z]/.test(password)) strength += 15;
+  if (/[0-9]/.test(password)) strength += 15;
+  if (/[^a-zA-Z0-9]/.test(password)) strength += 15;
+  return Math.min(strength, 100);
+}
+
+if (typeof document !== 'undefined') {
+  document.addEventListener('DOMContentLoaded', () => {
+    const regPassword = document.getElementById('regPassword');
+    const strengthBar = document.getElementById('passwordStrengthBar');
+    const strengthText = document.getElementById('passwordStrengthText');
+    
+    if (regPassword && strengthBar && strengthText) {
+      regPassword.addEventListener('input', (e) => {
+        const password = e.target.value;
+        const strength = calculatePasswordStrength(password);
+        strengthBar.style.width = strength + '%';
+        
+        if (strength < 40) {
+          strengthBar.style.background = 'var(--red)';
+          strengthText.textContent = 'Weak password';
+          strengthText.style.color = 'var(--red)';
+        } else if (strength < 70) {
+          strengthBar.style.background = 'var(--yellow)';
+          strengthText.textContent = 'Medium strength';
+          strengthText.style.color = 'var(--yellow)';
+        } else {
+          strengthBar.style.background = 'var(--green)';
+          strengthText.textContent = 'Strong password';
+          strengthText.style.color = 'var(--green)';
+        }
+      });
+    }
+  });
+}
+
+async function handleRegister(event) {
+  event.preventDefault();
+  const username = document.getElementById('regUsername').value.trim();
+  const password = document.getElementById('regPassword').value;
+  const confirmPassword = document.getElementById('regPasswordConfirm').value;
+  const registerBtn = document.getElementById('registerBtn');
+  const registerError = document.getElementById('registerError');
+  
+  registerError.style.display = 'none';
+  
+  if (password !== confirmPassword) {
+    registerError.textContent = 'Passwords do not match';
+    registerError.style.display = 'block';
+    return false;
+  }
+  
+  if (password.length < 8) {
+    registerError.textContent = 'Password must be at least 8 characters';
+    registerError.style.display = 'block';
+    return false;
+  }
+  
+  if (!/[a-zA-Z]/.test(password) || !/[0-9]/.test(password)) {
+    registerError.textContent = 'Password must contain at least 1 letter and 1 number';
+    registerError.style.display = 'block';
+    return false;
+  }
+  
+  registerBtn.disabled = true;
+  registerBtn.textContent = 'Creating account...';
+  
+  try {
+    const res = await fetch(API_BASE + '/api/auth/register', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ username, password })
+    });
+    
+    const data = await res.json();
+    
+    if (res.ok && data.success) {
+      setStoredToken(data.sessionToken, false);
+      showApp();
+    } else {
+      registerError.textContent = data.error || 'Registration failed';
+      registerError.style.display = 'block';
+      registerBtn.disabled = false;
+      registerBtn.textContent = 'Create Account';
+    }
+  } catch (err) {
+    registerError.textContent = 'Network error. Please try again.';
+    registerError.style.display = 'block';
+    registerBtn.disabled = false;
+    registerBtn.textContent = 'Create Account';
+  }
+  
+  return false;
+}
+
+async function handleLogin(event) {
+  event.preventDefault();
+  const username = document.getElementById('username').value.trim();
+  const password = document.getElementById('password').value;
+  const totpInput = document.getElementById('totpInput');
+  const totpCode = totpInput.value.trim();
+  const loginBtn = document.getElementById('loginBtn');
+  const loginError = document.getElementById('loginError');
+  const rememberMe = document.getElementById('rememberMeCheckbox').checked;
+  
+  loginBtn.disabled = true;
+  loginBtn.textContent = 'Logging in...';
+  loginError.style.display = 'none';
+  
+  try {
+    const body = { username, password };
+    if (totpCode) {
+      body.totpCode = totpCode;
+    }
+    if (rememberMe) {
+      body.rememberMe = true;
+    }
+    
+    const res = await fetch(API_BASE + '/api/auth/login', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify(body)
+    });
+    
+    const data = await res.json();
+    
+    if (data.requiresMfa) {
+      document.getElementById('authSubtitle').textContent = 'Enter your 6-digit TOTP code';
+      document.getElementById('usernameInputContainer').style.display = 'none';
+      document.getElementById('passwordInputContainer').style.display = 'none';
+      document.getElementById('totpInputContainer').style.display = 'block';
+      totpInput.focus();
+      loginBtn.disabled = false;
+      loginBtn.textContent = 'Verify';
+      return false;
+    }
+    
+    if (res.ok && data.success) {
+      setStoredToken(data.sessionToken, rememberMe);
+      showApp();
+    } else {
+      if (data.lockoutRemaining) {
+        loginError.textContent = `Too many failed attempts. Try again in ${data.lockoutRemaining} seconds.`;
+      } else {
+        loginError.textContent = data.error || 'Invalid credentials';
+      }
+      loginError.style.display = 'block';
+      loginBtn.disabled = false;
+      loginBtn.textContent = totpCode ? 'Verify' : 'Login';
+      
+      if (totpCode) {
+        totpInput.value = '';
+        totpInput.focus();
+      }
+    }
+  } catch (err) {
+    loginError.textContent = 'Network error. Please try again.';
+    loginError.style.display = 'block';
+    loginBtn.disabled = false;
+    loginBtn.textContent = totpCode ? 'Verify' : 'Login';
+  }
+  
+  return false;
+}
+
+async function handleRecovery(event) {
+  event.preventDefault();
+  const recoveryToken = document.getElementById('recoveryToken').value.trim();
+  const newPassword = document.getElementById('recoveryNewPassword').value;
+  const confirmPassword = document.getElementById('recoveryNewPasswordConfirm').value;
+  const recoveryBtn = document.getElementById('recoveryBtn');
+  const recoveryError = document.getElementById('recoveryError');
+  
+  recoveryError.style.display = 'none';
+  
+  if (newPassword !== confirmPassword) {
+    recoveryError.textContent = 'Passwords do not match';
+    recoveryError.style.display = 'block';
+    return false;
+  }
+  
+  if (newPassword.length < 8) {
+    recoveryError.textContent = 'Password must be at least 8 characters';
+    recoveryError.style.display = 'block';
+    return false;
+  }
+  
+  recoveryBtn.disabled = true;
+  recoveryBtn.textContent = 'Resetting password...';
+  
+  try {
+    const res = await fetch(API_BASE + '/api/auth/reset-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ recoveryToken, newPassword })
+    });
+    
+    const data = await res.json();
+    
+    if (res.ok && data.success) {
+      showToast('Password reset successfully! Please login.', 'success');
+      showLoginForm();
+    } else {
+      recoveryError.textContent = data.error || 'Password reset failed';
+      recoveryError.style.display = 'block';
+      recoveryBtn.disabled = false;
+      recoveryBtn.textContent = 'Reset Password';
+    }
+  } catch (err) {
+    recoveryError.textContent = 'Network error. Please try again.';
+    recoveryError.style.display = 'block';
+    recoveryBtn.disabled = false;
+    recoveryBtn.textContent = 'Reset Password';
+  }
+  
+  return false;
+}
+
+async function handleChangePassword(event) {
+  event.preventDefault();
+  const currentPassword = document.getElementById('currentPassword').value;
+  const newPassword = document.getElementById('newPassword').value;
+  const confirmPassword = document.getElementById('newPasswordConfirm').value;
+  const changePasswordBtn = document.getElementById('changePasswordBtn');
+  const changePasswordError = document.getElementById('changePasswordError');
+  
+  changePasswordError.style.display = 'none';
+  
+  if (newPassword !== confirmPassword) {
+    changePasswordError.textContent = 'New passwords do not match';
+    changePasswordError.style.display = 'block';
+    return false;
+  }
+  
+  if (newPassword.length < 8) {
+    changePasswordError.textContent = 'New password must be at least 8 characters';
+    changePasswordError.style.display = 'block';
+    return false;
+  }
+  
+  changePasswordBtn.disabled = true;
+  changePasswordBtn.textContent = 'Changing password...';
+  
+  try {
+    const res = await authFetch(API_BASE + '/api/auth/change-password', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ currentPassword, newPassword })
+    });
+    
+    const data = await res.json();
+    
+    if (res.ok && data.success) {
+      showToast('Password changed successfully! Other sessions have been invalidated.', 'success');
+      document.getElementById('currentPassword').value = '';
+      document.getElementById('newPassword').value = '';
+      document.getElementById('newPasswordConfirm').value = '';
+    } else {
+      changePasswordError.textContent = data.error || 'Password change failed';
+      changePasswordError.style.display = 'block';
+    }
+  } catch (err) {
+    changePasswordError.textContent = err.message || 'Network error. Please try again.';
+    changePasswordError.style.display = 'block';
+  } finally {
+    changePasswordBtn.disabled = false;
+    changePasswordBtn.textContent = 'Change Password';
+  }
+  
+  return false;
+}
+
+async function handleLogout() {
+  if (!confirm('Are you sure you want to logout?')) return;
+  
+  try {
+    await authFetch(API_BASE + '/api/auth/logout', { method: 'POST' });
+  } catch (e) {
+  }
+  
+  clearStoredToken();
+  location.reload();
+}
+
+function showApp() {
+  document.getElementById('loginPage').style.display = 'none';
+  document.getElementById('mainApp').style.display = 'flex';
+  fetchData();
+  fetchNewData();
+  fetchHealthHistory();
+  fetchMemoryFiles();
+  fetchKeyFiles();
+  checkMFAStatus();
+  
+  if (localStorage.getItem('usageAutoRefresh') === '1') {
+    const cb = document.getElementById('usageAutoRefresh');
+    if (cb) { cb.checked = true; toggleUsageAutoRefresh(true, true); }
+  }
+  setInterval(fetchData, 5000);
+  setInterval(fetchNewData, 15000);
+  setInterval(fetchHealthHistory, 60000);
+  setInterval(fetchMemoryFiles, 30000);
+  setInterval(fetchKeyFiles, 30000);
+}
+
+function showLogin() {
+  document.getElementById('loginPage').style.display = 'flex';
+  document.getElementById('mainApp').style.display = 'none';
+}
+
+async function checkAuth() {
+  try {
+    const statusRes = await fetch(API_BASE + '/api/auth/status');
+    const statusData = await statusRes.json();
+    
+    const token = getStoredToken();
+    
+    if (token) {
+      const verifyRes = await fetch(API_BASE + '/api/sessions', {
+        headers: { 'Authorization': `Bearer ${token}` }
+      });
+      if (verifyRes.ok) {
+        showApp();
+        return;
+      } else {
+        clearStoredToken();
+      }
+    }
+    
+    if (statusData.registered === false) {
+      showRegistrationForm();
+      showLogin();
+    } else {
+      showLoginForm();
+      showLogin();
+    }
+  } catch (err) {
+    showLoginForm();
+    showLogin();
+  }
+}
+
+function authFetch(url, options = {}) {
+  const token = getStoredToken();
+  if (!token) {
+    showLogin();
+    throw new Error('Not authenticated');
+  }
+  
+  options.headers = options.headers || {};
+  options.headers['Authorization'] = `Bearer ${token}`;
+  if (typeof options.cache === 'undefined') {
+    options.cache = 'no-store';
+  }
+  
+  return fetch(url, options).then(res => {
+    if (res.status === 401) {
+      clearStoredToken();
+      showLogin();
+      throw new Error('Session expired');
+    }
+    return res;
+  });
+}
+
+const qrcodegen = (function() {
+  'use strict';
+  
+  class QrCode {
+    constructor(version, errorCorrectionLevel, dataCodewords, msk) {
+      this.version = version;
+      this.errorCorrectionLevel = errorCorrectionLevel;
+      this.size = version * 4 + 17;
+      this.mask = msk;
+      
+      const qr = [];
+      for (let i = 0; i < this.size; i++)
+        qr.push(new Array(this.size).fill(false));
+      this.modules = qr;
+      this.isFunction = qr.map(row => row.slice());
+      
+      this.drawFunctionPatterns();
+      const allCodewords = this.addEccAndInterleave(dataCodewords);
+      this.drawCodewords(allCodewords);
+      this.applyMask(msk);
+      this.drawFormatBits(msk);
+      this.isFunction = null;
+    }
+    
+    static encodeText(text, ecl) {
+      const segs = QrSegment.makeSegments(text);
+      return QrCode.encodeSegments(segs, ecl);
+    }
+    
+    static encodeSegments(segs, ecl, minVersion = 1, maxVersion = 40, mask = -1, boostEcl = true) {
+      const version = QrCode.MIN_VERSION;
+      for (let v = minVersion; ; v++) {
+        const dataCapacityBits = QrCode.getNumDataCodewords(v, ecl) * 8;
+        const dataUsedBits = QrSegment.getTotalBits(segs, v);
+        if (dataUsedBits <= dataCapacityBits) {
+          const bb = [];
+          for (const seg of segs) {
+            bb.push(...seg.getData());
+          }
+          while (bb.length < dataCapacityBits)
+            bb.push(0);
+          const dataCodewords = [];
+          for (let i = 0; i < bb.length; i += 8) {
+            let byte = 0;
+            for (let j = 0; j < 8; j++)
+              byte = (byte << 1) | (bb[i + j] || 0);
+            dataCodewords.push(byte);
+          }
+          return new QrCode(v, ecl, dataCodewords, mask === -1 ? 0 : mask);
+        }
+        if (v >= maxVersion)
+          throw new RangeError('Data too long');
+      }
+    }
+    
+    getModule(x, y) {
+      return this.modules[y][x];
+    }
+    
+    drawFunctionPatterns() {
+      for (let i = 0; i < this.size; i++) {
+        this.setFunctionModule(6, i, i % 2 === 0);
+        this.setFunctionModule(i, 6, i % 2 === 0);
+      }
+      this.drawFinderPattern(3, 3);
+      this.drawFinderPattern(this.size - 4, 3);
+      this.drawFinderPattern(3, this.size - 4);
+    }
+    
+    drawFinderPattern(x, y) {
+      for (let dy = -4; dy <= 4; dy++) {
+        for (let dx = -4; dx <= 4; dx++) {
+          const dist = Math.max(Math.abs(dx), Math.abs(dy));
+          const xx = x + dx;
+          const yy = y + dy;
+          if (0 <= xx && xx < this.size && 0 <= yy && yy < this.size)
+            this.setFunctionModule(xx, yy, dist !== 2 && dist !== 4);
+        }
+      }
+    }
+    
+    drawFormatBits(mask) {
+      const data = this.errorCorrectionLevel.formatBits << 3 | mask;
+      let rem = data;
+      for (let i = 0; i < 10; i++)
+        rem = (rem << 1) ^ ((rem >>> 9) * 0x537);
+      const bits = (data << 10 | rem) ^ 0x5412;
+      for (let i = 0; i <= 5; i++)
+        this.setFunctionModule(8, i, getBit(bits, i));
+      this.setFunctionModule(8, 7, getBit(bits, 6));
+      this.setFunctionModule(8, 8, getBit(bits, 7));
+      this.setFunctionModule(7, 8, getBit(bits, 8));
+      for (let i = 9; i < 15; i++)
+        this.setFunctionModule(14 - i, 8, getBit(bits, i));
+      for (let i = 0; i < 8; i++)
+        this.setFunctionModule(this.size - 1 - i, 8, getBit(bits, i));
+      for (let i = 8; i < 15; i++)
+        this.setFunctionModule(8, this.size - 15 + i, getBit(bits, i));
+      this.setFunctionModule(8, this.size - 8, true);
+    }
+    
+    drawCodewords(data) {
+      let i = 0;
+      for (let right = this.size - 1; right >= 1; right -= 2) {
+        if (right === 6) right = 5;
+        for (let vert = 0; vert < this.size; vert++) {
+          for (let j = 0; j < 2; j++) {
+            const x = right - j;
+            const upward = ((right + 1) & 2) === 0;
+            const y = upward ? this.size - 1 - vert : vert;
+            if (!this.isFunction[y][x] && i < data.length * 8) {
+              this.modules[y][x] = getBit(data[i >>> 3], 7 - (i & 7));
+              i++;
+            }
+          }
+        }
+      }
+    }
+    
+    applyMask(mask) {
+      for (let y = 0; y < this.size; y++) {
+        for (let x = 0; x < this.size; x++) {
+          if (!this.isFunction[y][x]) {
+            let invert = false;
+            if (mask === 0) invert = (x + y) % 2 === 0;
+            if (invert) this.modules[y][x] = !this.modules[y][x];
+          }
+        }
+      }
+    }
+    
+    setFunctionModule(x, y, isDark) {
+      this.modules[y][x] = isDark;
+      this.isFunction[y][x] = true;
+    }
+    
+    addEccAndInterleave(data) {
+      const ver = this.version;
+      const ecl = this.errorCorrectionLevel;
+      const numBlocks = QrCode.NUM_ERROR_CORRECTION_BLOCKS[ecl.ordinal][ver];
+      const blockEccLen = QrCode.ECC_CODEWORDS_PER_BLOCK[ecl.ordinal][ver];
+      const rawCodewords = Math.floor(QrCode.getNumRawDataModules(ver) / 8);
+      const numShortBlocks = numBlocks - rawCodewords % numBlocks;
+      const shortBlockLen = Math.floor(rawCodewords / numBlocks);
+      
+      const blocks = [];
+      const rsDiv = QrCode.reedSolomonComputeDivisor(blockEccLen);
+      let k = 0;
+      for (let i = 0; i < numBlocks; i++) {
+        const dat = data.slice(k, k + shortBlockLen - blockEccLen + (i < numShortBlocks ? 0 : 1));
+        k += dat.length;
+        const ecc = QrCode.reedSolomonComputeRemainder(dat, rsDiv);
+        if (i < numShortBlocks)
+          dat.push(0);
+        blocks.push(dat.concat(ecc));
+      }
+      
+      const result = [];
+      for (let i = 0; i < blocks[0].length; i++) {
+        blocks.forEach((block, j) => {
+          if (i !== shortBlockLen - blockEccLen || j >= numShortBlocks)
+            result.push(block[i]);
+        });
+      }
+      return result;
+    }
+    
+    static getNumRawDataModules(ver) {
+      let result = (16 * ver + 128) * ver + 64;
+      if (ver >= 2) {
+        const numAlign = Math.floor(ver / 7) + 2;
+        result -= (25 * numAlign - 10) * numAlign - 55;
+        if (ver >= 7) result -= 36;
+      }
+      return result;
+    }
+    
+    static getNumDataCodewords(ver, ecl) {
+      return Math.floor(QrCode.getNumRawDataModules(ver) / 8) -
+        QrCode.ECC_CODEWORDS_PER_BLOCK[ecl.ordinal][ver] *
+        QrCode.NUM_ERROR_CORRECTION_BLOCKS[ecl.ordinal][ver];
+    }
+    
+    static reedSolomonComputeDivisor(degree) {
+      const result = [];
+      for (let i = 0; i < degree - 1; i++)
+        result.push(0);
+      result.push(1);
+      let root = 1;
+      for (let i = 0; i < degree; i++) {
+        for (let j = 0; j < result.length; j++) {
+          result[j] = QrCode.reedSolomonMultiply(result[j], root);
+          if (j + 1 < result.length)
+            result[j] ^= result[j + 1];
+        }
+        root = QrCode.reedSolomonMultiply(root, 0x02);
+      }
+      return result;
+    }
+    
+    static reedSolomonComputeRemainder(data, divisor) {
+      const result = divisor.map(() => 0);
+      for (const b of data) {
+        const factor = b ^ result.shift();
+        result.push(0);
+        divisor.forEach((coef, i) => result[i] ^= QrCode.reedSolomonMultiply(coef, factor));
+      }
+      return result;
+    }
+    
+    static reedSolomonMultiply(x, y) {
+      if (x >>> 8 !== 0 || y >>> 8 !== 0) throw new RangeError('Byte out of range');
+      let z = 0;
+      for (let i = 7; i >= 0; i--) {
+        z = (z << 1) ^ ((z >>> 7) * 0x11D);
+        z ^= ((y >>> i) & 1) * x;
+      }
+      return z;
+    }
+  }
+  
+  QrCode.MIN_VERSION = 1;
+  QrCode.MAX_VERSION = 40;
+  QrCode.Ecc = {
+    LOW: {ordinal: 0, formatBits: 1},
+    MEDIUM: {ordinal: 1, formatBits: 0},
+    QUARTILE: {ordinal: 2, formatBits: 3},
+    HIGH: {ordinal: 3, formatBits: 2}
+  };
+  QrCode.ECC_CODEWORDS_PER_BLOCK = [
+    [-1, 7, 10, 15, 20, 26, 18, 20, 24, 30, 18, 20, 24, 26, 30, 22, 24, 28, 30, 28, 28, 28, 28, 30, 30, 26, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],
+    [-1, 10, 16, 26, 18, 24, 16, 18, 22, 22, 26, 30, 22, 22, 24, 24, 28, 28, 26, 26, 26, 26, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28, 28],
+    [-1, 13, 22, 18, 26, 18, 24, 18, 22, 20, 24, 28, 26, 24, 20, 30, 24, 28, 28, 26, 30, 28, 30, 30, 30, 30, 28, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30],
+    [-1, 17, 28, 22, 16, 22, 28, 26, 26, 24, 28, 24, 28, 22, 24, 24, 30, 28, 28, 26, 28, 30, 24, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30, 30]
+  ];
+  QrCode.NUM_ERROR_CORRECTION_BLOCKS = [
+    [-1, 1, 1, 1, 1, 1, 2, 2, 2, 2, 4, 4, 4, 4, 4, 6, 6, 6, 6, 7, 8, 8, 9, 9, 10, 12, 12, 12, 13, 14, 15, 16, 17, 18, 19, 19, 20, 21, 22, 24, 25],
+    [-1, 1, 1, 1, 2, 2, 4, 4, 4, 5, 5, 5, 8, 9, 9, 10, 10, 11, 13, 14, 16, 17, 17, 18, 20, 21, 23, 25, 26, 28, 29, 31, 33, 35, 37, 38, 40, 43, 45, 47, 49],
+    [-1, 1, 1, 2, 2, 4, 4, 6, 6, 8, 8, 8, 10, 12, 16, 12, 17, 16, 18, 21, 20, 23, 23, 25, 27, 29, 34, 34, 35, 38, 40, 43, 45, 48, 51, 53, 56, 59, 62, 65, 68],
+    [-1, 1, 1, 2, 4, 4, 4, 5, 6, 8, 8, 11, 11, 16, 16, 18, 16, 19, 21, 25, 25, 25, 34, 30, 32, 35, 37, 40, 42, 45, 48, 51, 54, 57, 60, 63, 66, 70, 74, 77, 81]
+  ];
+  
+  class QrSegment {
+    constructor(mode, numChars, bitData) {
+      this.mode = mode;
+      this.numChars = numChars;
+      this.bitData = bitData;
+    }
+    
+    static makeSegments(text) {
+      return [QrSegment.makeBytes(text)];
+    }
+    
+    static makeBytes(data) {
+      const bb = [];
+      for (let i = 0; i < data.length; i++) {
+        const c = data.charCodeAt(i);
+        for (let j = 7; j >= 0; j--)
+          bb.push((c >>> j) & 1);
+      }
+      return new QrSegment({modeBits: 0x4, numBitsCharCount: [8, 16, 16]}, data.length, bb);
+    }
+    
+    getData() {
+      const result = [];
+      for (let i = 0; i < 4; i++)
+        result.push((this.mode.modeBits >>> (3 - i)) & 1);
+      const ccBits = this.mode.numBitsCharCount[0];
+      for (let i = ccBits - 1; i >= 0; i--)
+        result.push((this.numChars >>> i) & 1);
+      result.push(...this.bitData);
+      return result;
+    }
+    
+    static getTotalBits(segs, version) {
+      let result = 0;
+      for (const seg of segs) {
+        const ccbits = seg.mode.numBitsCharCount[0];
+        result += 4 + ccbits + seg.bitData.length;
+      }
+      return result;
+    }
+  }
+  
+  function getBit(x, i) {
+    return ((x >>> i) & 1) !== 0;
+  }
+  
+  return {QrCode, QrSegment};
+})();
+
+async function checkMFAStatus() {
+  try {
+    const res = await authFetch(API_BASE + '/api/auth/mfa-status');
+    const data = await res.json();
+    const enabled = data.enabled;
+    
+    const indicator = document.getElementById('mfaStatusIndicator');
+    if (enabled) {
+      indicator.textContent = '🔒 MFA Enabled';
+      indicator.style.background = 'rgba(16,185,129,0.15)';
+      indicator.style.color = 'var(--green)';
+      indicator.style.border = '1px solid rgba(16,185,129,0.3)';
+      document.getElementById('mfaEnabledView').style.display = 'block';
+      document.getElementById('mfaDisabledView').style.display = 'none';
+    } else {
+      indicator.textContent = '⚠️ MFA Disabled';
+      indicator.style.background = 'rgba(245,158,11,0.15)';
+      indicator.style.color = 'var(--yellow)';
+      indicator.style.border = '1px solid rgba(245,158,11,0.3)';
+      document.getElementById('mfaEnabledView').style.display = 'none';
+      document.getElementById('mfaDisabledView').style.display = 'block';
+    }
+    indicator.style.display = 'block';
+    document.getElementById('mfaSetupView').style.display = 'none';
+  } catch (err) {
+    console.error('Failed to check MFA status:', err);
+  }
+}
+
+function generateQRCode(text) {
+  const qr = qrcodegen.QrCode.encodeText(text, qrcodegen.QrCode.Ecc.MEDIUM);
+  const border = 4;
+  const s = qr.size + border * 2;
+  let svg = `<svg xmlns="http://www.w3.org/2000/svg" viewBox="0 0 ${s} ${s}" width="256" height="256" shape-rendering="crispEdges">`;
+  svg += `<rect width="${s}" height="${s}" fill="#ffffff"/>`;
+  let path = '';
+  for (let y = 0; y < qr.size; y++) {
+    for (let x = 0; x < qr.size; x++) {
+      if (qr.getModule(x, y)) {
+        path += `M${x + border},${y + border}h1v1h-1z`;
+      }
+    }
+  }
+  svg += `<path d="${path}" fill="#000000"/>`;
+  svg += '</svg>';
+  const b64 = btoa(svg);
+  return `<img src="data:image/svg+xml;base64,${b64}" width="256" height="256" style="image-rendering:pixelated;">`;
+}
+
+async function setupMFA() {
+  const btn = document.getElementById('enableMfaBtn');
+  btn.disabled = true;
+  btn.textContent = 'Setting up...';
+  
+  try {
+    const res = await authFetch(API_BASE + '/api/auth/setup-mfa', { method: 'POST' });
+    const data = await res.json();
+    
+    if (res.ok && data.secret) {
+      document.getElementById('mfaSecretDisplay').textContent = data.secret;
+      document.getElementById('qrCodeContainer').innerHTML = generateQRCode(data.otpauth_uri);
+      document.getElementById('mfaDisabledView').style.display = 'none';
+      document.getElementById('mfaSetupView').style.display = 'block';
+    } else {
+      alert('Failed to setup MFA: ' + (data.error || 'Unknown error'));
+      btn.disabled = false;
+      btn.textContent = '✅ Enable MFA';
+    }
+  } catch (err) {
+    alert('Failed to setup MFA: ' + err.message);
+    btn.disabled = false;
+    btn.textContent = '✅ Enable MFA';
+  }
+}
+
+async function confirmMFASetup() {
+  const code = document.getElementById('mfaVerifyCode').value.trim();
+  const errorEl = document.getElementById('mfaVerifyError');
+  const btn = document.getElementById('confirmMfaBtn');
+  errorEl.style.display = 'none';
+  
+  if (!code || code.length !== 6) {
+    errorEl.textContent = 'Enter the 6-digit code from your authenticator app.';
+    errorEl.style.display = 'block';
+    return;
+  }
+  
+  btn.disabled = true;
+  btn.textContent = 'Verifying...';
+  
+  try {
+    const res = await authFetch(API_BASE + '/api/auth/confirm-mfa', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ totpCode: code })
+    });
+    const data = await res.json();
+    
+    if (res.ok && data.success) {
+      showToast('MFA enabled successfully!', 'success');
+      document.getElementById('mfaSetupView').style.display = 'none';
+      document.getElementById('mfaVerifyCode').value = '';
+      checkMFAStatus();
+    } else {
+      errorEl.textContent = data.error || 'Invalid code. Try again.';
+      errorEl.style.display = 'block';
+      document.getElementById('mfaVerifyCode').value = '';
+      document.getElementById('mfaVerifyCode').focus();
+    }
+  } catch (err) {
+    errorEl.textContent = 'Verification failed. Try again.';
+    errorEl.style.display = 'block';
+  }
+  
+  btn.disabled = false;
+  btn.textContent = '✅ Verify & Enable';
+}
+
+function cancelMFASetup() {
+  document.getElementById('mfaSetupView').style.display = 'none';
+  document.getElementById('mfaVerifyCode').value = '';
+  checkMFAStatus();
+}
+
+async function disableMFA() {
+  const code = prompt('Enter your current 6-digit TOTP code to disable MFA:');
+  if (!code) return;
+  
+  if (!/^\d{6}$/.test(code)) {
+    alert('Invalid code format. Must be 6 digits.');
+    return;
+  }
+  
+  const btn = document.getElementById('disableMfaBtn');
+  btn.disabled = true;
+  btn.textContent = 'Disabling...';
+  
+  try {
+    const res = await authFetch(API_BASE + '/api/auth/disable-mfa', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ totpCode: code })
+    });
+    
+    const data = await res.json();
+    
+    if (res.ok && data.success) {
+      alert('MFA has been disabled successfully.');
+      checkMFAStatus();
+    } else {
+      alert('Failed to disable MFA: ' + (data.error || 'Invalid code'));
+      btn.disabled = false;
+      btn.textContent = '⚠️ Disable MFA';
+    }
+  } catch (err) {
+    alert('Failed to disable MFA: ' + err.message);
+    btn.disabled = false;
+    btn.textContent = '⚠️ Disable MFA';
+  }
+}
+
+checkAuth();
+setInterval(() => {
+  const token = getStoredToken();
+  if (!token) showLogin();
+}, 60000);
+
 let sessions = [];
 let costs = {};
 let usage = {};
@@ -1859,6 +2972,9 @@ document.querySelectorAll('.nav-item').forEach(item => {
     if (page === 'memory') {
       fetchMemoryFiles();
     }
+    if (page === 'files') {
+      fetchKeyFiles();
+    }
   });
 });
 
@@ -1874,9 +2990,9 @@ async function fetchData() {
   try {
     // Fast path: load sessions, costs, system first
     const [sessRes, costsRes, sysRes] = await Promise.all([
-      fetch('/api/sessions'),
-      fetch('/api/costs'),
-      fetch('/api/system')
+      authFetch(API_BASE + '/api/sessions'),
+      authFetch(API_BASE + '/api/costs'),
+      authFetch(API_BASE + '/api/system')
     ]);
     
     sessions = await sessRes.json();
@@ -1886,7 +3002,7 @@ async function fetchData() {
     updateDashboard();
     
     // Then load usage async (slower endpoint)
-    fetch('/api/usage').then(r => r.json()).then(u => {
+    authFetch(API_BASE + '/api/usage').then(r => r.json()).then(u => {
       usage = u;
       try { updateDashboard(); } catch {}
     }).catch(() => {});
@@ -1959,7 +3075,7 @@ function updateOverview() {
   todayEl.dataset.format = 'currency';
   animateValue(todayEl, costs.today || 0);
   
-  const opusLimitsKey = Object.keys(usage.fiveHour?.perModel || {}).find(k => k.includes('opus')) || '';
+  const opusLimitsKey = Object.keys((usage.fiveHour && usage.fiveHour.perModel) || {}).find(k => k.includes('opus')) || '';
   // Overview usage card: 5h session only
   try {
     const cuRes = _cachedClaudeUsage;
@@ -1969,7 +3085,7 @@ function updateOverview() {
       sPct = cu.session.percent;
     } else {
       const opusDataOv = opusLimitsKey ? usage.fiveHour.perModel[opusLimitsKey] : { output: 0 };
-      const opusLimit = usage.estimatedLimits?.opus || 88000;
+      const opusLimit = (usage.estimatedLimits && usage.estimatedLimits.opus) || 88000;
       sPct = Math.min(Math.round((opusDataOv.output / opusLimit) * 100), 100);
     }
     const sEl = document.getElementById('ovSessionPct');
@@ -1995,7 +3111,7 @@ function updateOverview() {
     document.getElementById('systemCpu').textContent = cpuPct + '%';
     updateRadialGauge('cpuCircle', cpuPct);
     
-    const ramPct = systemStats.memory?.percent || 0;
+    const ramPct = (systemStats.memory && systemStats.memory.percent) || 0;
     document.getElementById('systemRam').textContent = ramPct + '%';
     updateRadialGauge('ramCircle', ramPct);
     const ramDetail = document.getElementById('systemRamDetail');
@@ -2004,12 +3120,13 @@ function updateOverview() {
     }
     
     const temp = systemStats.cpu.temp;
-    if (temp !== null) {
+    if (temp !== null && temp !== undefined) {
       const tempPct = Math.min((temp / 90) * 100, 100);
       document.getElementById('systemTemp').textContent = temp.toFixed(0) + '°';
       updateRadialGauge('tempCircle', tempPct);
     } else {
-      document.getElementById('systemTemp').textContent = '--';
+      document.getElementById('systemTemp').textContent = 'N/A';
+      updateRadialGauge('tempCircle', 0);
     }
     
     const uptime = systemStats.uptime || 0;
@@ -2136,7 +3253,7 @@ function refreshExpandedMessages(key) {
   if (!s) return;
   const el = document.getElementById('expanded-msgs-' + CSS.escape(key));
   if (!el) { expandedSessionKey = null; return; }
-  fetch('/api/session-messages?id=' + encodeURIComponent(s.sessionId || s.key))
+  authFetch(API_BASE + '/api/session-messages?id=' + encodeURIComponent(s.sessionId || s.key))
     .then(r => r.json())
     .then(msgs => {
       if (!document.getElementById('expanded-msgs-' + CSS.escape(key))) return;
@@ -2416,7 +3533,7 @@ function updateSessions() {
 let _cachedClaudeUsage = null;
 async function fetchClaudeUsage() {
   try {
-    const r = await fetch('/api/claude-usage');
+    const r = await authFetch(API_BASE + '/api/claude-usage');
     const d = await r.json();
     if (d.error) return;
     _cachedClaudeUsage = d;
@@ -2474,13 +3591,13 @@ async function scrapeClaudeUsage() {
   if (btn2) { btn2.textContent = '⏳'; btn2.disabled = true; }
   if (label && _usageAutoInterval) label.textContent = '⏳...';
   try {
-    await fetch('/api/claude-usage-scrape', { method: 'POST' });
+    await authFetch(API_BASE + '/api/claude-usage-scrape', { method: 'POST' });
     // Poll until data changes or timeout
-    const oldTs = _cachedClaudeUsage?.scraped_at || '';
+    const oldTs = (_cachedClaudeUsage && _cachedClaudeUsage.scraped_at) || '';
     for (let i = 0; i < 12; i++) {
       await new Promise(r => setTimeout(r, 2000));
       await fetchClaudeUsage();
-      if (_cachedClaudeUsage?.scraped_at && _cachedClaudeUsage.scraped_at !== oldTs) break;
+      if (_cachedClaudeUsage && _cachedClaudeUsage.scraped_at && _cachedClaudeUsage.scraped_at !== oldTs) break;
     }
     showToast('Usage data refreshed', 'success');
     if (typeof updateDashboard === 'function') updateDashboard();
@@ -2510,7 +3627,7 @@ function formatMs(ms) {
 
 function updateLimits() {
   const limits = usage.estimatedLimits || { opus: 88000, sonnet: 220000 };
-  const models = usage.fiveHour?.perModel || {};
+  const models = (usage.fiveHour && usage.fiveHour.perModel) || {};
 
   const opusKey = Object.keys(models).find(k => k.includes('opus')) || '';
   const sonnetKey = Object.keys(models).find(k => k.includes('sonnet')) || '';
@@ -2568,9 +3685,9 @@ function updateLimits() {
     }
   }
 
-  const resetIn = usage.fiveHour?.windowResetIn || 0;
+  const resetIn = (usage.fiveHour && usage.fiveHour.windowResetIn) || 0;
   document.getElementById('windowResetValue').textContent = resetIn > 0 ? formatMs(resetIn) : 'No window';
-  document.getElementById('windowResetSub').textContent = usage.fiveHour?.windowStart ? 'Since ' + new Date(usage.fiveHour.windowStart).toLocaleTimeString('en', {hour:'2-digit',minute:'2-digit'}) : '';
+  document.getElementById('windowResetSub').textContent = (usage.fiveHour && usage.fiveHour.windowStart) ? 'Since ' + new Date(usage.fiveHour.windowStart).toLocaleTimeString('en', {hour:'2-digit',minute:'2-digit'}) : '';
 
   const pricing = {
     opus: { input: 15, output: 75, cache: 1.875 },
@@ -2603,7 +3720,7 @@ function updateLimits() {
 
   document.getElementById('windowBreakdown').innerHTML = windowHtml || '<div class="empty-state-text">No data</div>';
 
-  const recentCalls = usage.fiveHour?.recentCalls || [];
+  const recentCalls = (usage.fiveHour && usage.fiveHour.recentCalls) || [];
   const callsHtml = recentCalls.slice(0, 15).map(call => {
     const shortModel = call.model.split('/').pop();
     return `
@@ -2856,7 +3973,8 @@ function connectLiveFeed() {
     sel.value = current || 'all';
   }
 
-  liveEventSource = new EventSource('/api/live');
+  const token = getStoredToken();
+  liveEventSource = new EventSource(API_BASE + '/api/live?token=' + encodeURIComponent(token));
   
   liveEventSource.onmessage = (event) => {
     if (feedPaused) return;
@@ -2886,8 +4004,10 @@ function connectLiveFeed() {
         }
       }
       
-      const sf = document.getElementById('feedSessionFilter')?.value || 'all';
-      const rf = document.getElementById('feedRoleFilter')?.value || 'all';
+      const sfEl = document.getElementById('feedSessionFilter');
+      const rfEl = document.getElementById('feedRoleFilter');
+      const sf = sfEl ? sfEl.value : 'all';
+      const rf = rfEl ? rfEl.value : 'all';
       const visible = (sf === 'all' || sf === sessionName) && (rf === 'all' || rf === roleClass);
 
       const time = new Date(data.timestamp).toLocaleTimeString('en', { 
@@ -2964,7 +4084,7 @@ let healthHistory = [];
 
 async function fetchHealthHistory() {
   try {
-    const res = await fetch('/api/health-history');
+    const res = await authFetch(API_BASE + '/api/health-history');
     healthHistory = await res.json();
     renderHealthSparklines();
   } catch {}
@@ -2998,12 +4118,12 @@ function renderHealthSparklines() {
 async function fetchNewData() {
   try {
     const [cronsRes, gitRes, svcRes, memRes, tokRes, rtRes] = await Promise.all([
-      fetch('/api/crons'),
-      fetch('/api/git'),
-      fetch('/api/services'),
-      fetch('/api/memory'),
-      fetch('/api/tokens-today'),
-      fetch('/api/response-time')
+      authFetch(API_BASE + '/api/crons'),
+      authFetch(API_BASE + '/api/git'),
+      authFetch(API_BASE + '/api/services'),
+      authFetch(API_BASE + '/api/memory'),
+      authFetch(API_BASE + '/api/tokens-today'),
+      authFetch(API_BASE + '/api/response-time')
     ]);
     const crons = await cronsRes.json();
     const git = await gitRes.json();
@@ -3012,13 +4132,18 @@ async function fetchNewData() {
     const tokens = await tokRes.json();
     const rt = await rtRes.json();
 
-    document.getElementById('servicesStatus').innerHTML = services.map(s =>
-      `<div style="display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:1px solid var(--border);">
-        <span style="width:10px;height:10px;border-radius:50%;background:${s.active ? 'var(--green)' : 'var(--red)'};box-shadow:0 0 8px ${s.active ? 'var(--green-glow)' : 'rgba(239,68,68,0.3)'};"></span>
+    document.getElementById('servicesStatus').innerHTML = services.map((s, i) => {
+      const isLast = i === services.length - 1;
+      const border = isLast ? 'none' : '1px solid var(--border)';
+      const status = s.active === null ? 'N/A' : (s.active ? 'Running' : 'Stopped');
+      const dotColor = s.active === null ? 'var(--text-muted)' : (s.active ? 'var(--green)' : 'var(--red)');
+      const textColor = s.active === null ? 'var(--text-muted)' : (s.active ? 'var(--green)' : 'var(--red)');
+      return `<div style="display:flex;align-items:center;gap:10px;padding:12px 0;border-bottom:${border};">
+        <span style="width:10px;height:10px;border-radius:50%;background:${dotColor};flex-shrink:0;"></span>
         <span style="font-weight:600;font-size:14px;">${s.name}</span>
-        <span style="margin-left:auto;font-size:12px;color:${s.active ? 'var(--green)' : 'var(--red)'};">${s.active ? 'Running' : 'Stopped'}</span>
-      </div>`
-    ).join('') || '<div class="empty-state-text">No services</div>';
+        <span style="margin-left:auto;font-size:12px;color:${textColor};">${status}</span>
+      </div>`;
+    }).join('') || '<div class="empty-state-text">No services</div>';
 
     const now = Date.now();
     document.getElementById('cronJobs').innerHTML = crons.map(c => {
@@ -3040,14 +4165,14 @@ async function fetchNewData() {
 // Cron management
 window.toggleCronJob = async function(id) {
   try {
-    await fetch(`/api/cron/${id}/toggle`, { method: 'POST' });
+    await authFetch(`/api/cron/${id}/toggle`, { method: 'POST' });
     await fetchNewData();
   } catch {}
 };
 
 window.runCronJob = async function(id) {
   try {
-    await fetch(`/api/cron/${id}/run`, { method: 'POST' });
+    await authFetch(`/api/cron/${id}/run`, { method: 'POST' });
     sendNotification('Cron Job Started', `Running cron job ${id.substring(0, 8)}...`);
   } catch {}
 };
@@ -3117,7 +4242,7 @@ window.runCronJob = async function(id) {
 let memoryFiles = [];
 async function fetchMemoryFiles() {
   try {
-    const res = await fetch('/api/memory-files');
+    const res = await authFetch(API_BASE + '/api/memory-files');
     memoryFiles = await res.json();
     renderMemoryFilesList();
   } catch {}
@@ -3148,7 +4273,7 @@ window.loadMemoryFile = async function(name) {
     const contentEl = document.getElementById('memoryFileContent');
     titleEl.textContent = name;
     contentEl.innerHTML = '<div style="color:var(--text-muted);">Loading...</div>';
-    const res = await fetch('/api/memory-file?path=' + encodeURIComponent(name));
+    const res = await authFetch(API_BASE + '/api/memory-file?path=' + encodeURIComponent(name));
     const content = await res.text();
     let html = content
       .replace(/</g, '&lt;').replace(/>/g, '&gt;')
@@ -3160,6 +4285,153 @@ window.loadMemoryFile = async function(name) {
     contentEl.innerHTML = html;
   } catch (e) {
     document.getElementById('memoryFileContent').innerHTML = '<div style="color:var(--red);">Failed to load file</div>';
+  }
+};
+
+// Files page
+let keyFiles = [];
+let currentKeyFile = null;
+let keyFileEditing = false;
+let _currentKeyFileRaw = '';
+
+window.fetchKeyFiles = async function fetchKeyFiles() {
+  try {
+    const res = await authFetch(API_BASE + '/api/key-files');
+    keyFiles = await res.json();
+    renderKeyFilesList();
+  } catch {}
+}
+
+function renderKeyFilesList() {
+  const el = document.getElementById('keyFilesList');
+  if (!el) return;
+  const now = Date.now();
+  el.innerHTML = keyFiles.map(f => {
+    const age = now - f.modified;
+    const ago = age < 60000 ? 'just now' : age < 3600000 ? Math.round(age/60000)+'m ago' : age < 86400000 ? Math.round(age/3600000)+'h ago' : Math.round(age/86400000)+'d ago';
+    const sizeKb = (f.size / 1024).toFixed(1);
+    const icon = f.name.startsWith('skills/') ? '🎯' : f.name.endsWith('.service') ? '⚙️' : f.name.endsWith('.json') ? '🔧' : '📄';
+    const isSelected = f.name === currentKeyFile;
+    return `<div style="padding:12px;border-bottom:1px solid var(--border);cursor:pointer;transition:all 0.2s;${isSelected ? 'background:var(--bg-tertiary);' : ''}" onclick="window.loadKeyFile('${f.name.replace(/'/g, "\\'")}')" onmouseover="this.style.background='var(--bg-tertiary)'" onmouseout="this.style.background='${isSelected ? 'var(--bg-tertiary)' : 'transparent'}'">
+      <div style="display:flex;align-items:center;gap:8px;margin-bottom:4px;">
+        <span style="font-size:18px;">${icon}</span>
+        <span style="font-weight:600;font-size:13px;flex:1;">${f.name}</span>
+      </div>
+      <div style="font-size:11px;color:var(--text-muted);">${sizeKb} KB · ${ago}</div>
+    </div>`;
+  }).join('') || '<div class="empty-state-text">No files found</div>';
+}
+
+window.loadKeyFile = async function(name) {
+  currentKeyFile = name;
+  keyFileEditing = false;
+  const titleEl = document.getElementById('keyFileTitle');
+  const contentEl = document.getElementById('keyFileContent');
+  const editorEl = document.getElementById('keyFileEditor');
+  const editBtn = document.getElementById('keyFileEditBtn');
+  const saveBtn = document.getElementById('keyFileSaveBtn');
+  const cancelBtn = document.getElementById('keyFileCancelBtn');
+
+  titleEl.textContent = name;
+  contentEl.innerHTML = '<div style="color:var(--text-muted);">Loading...</div>';
+  contentEl.style.display = 'block';
+  editorEl.style.display = 'none';
+  editBtn.style.display = 'inline-block';
+  saveBtn.style.display = 'none';
+  cancelBtn.style.display = 'none';
+
+  renderKeyFilesList();
+
+  try {
+    const res = await authFetch(API_BASE + '/api/key-file?path=' + encodeURIComponent(name));
+    if (!res.ok) { contentEl.innerHTML = '<div style="color:var(--red);">Failed to load: ' + res.status + '</div>'; return; }
+    const content = await res.text();
+    _currentKeyFileRaw = content;
+
+    if (name.endsWith('.md')) {
+      let html = content
+        .replace(/</g, '&lt;').replace(/>/g, '&gt;')
+        .replace(/^### (.+)$/gm, '<div style="font-size:16px;font-weight:700;color:var(--accent);margin:16px 0 8px;">$1</div>')
+        .replace(/^## (.+)$/gm, '<div style="font-size:18px;font-weight:700;color:var(--accent);margin:20px 0 12px;">$1</div>')
+        .replace(/^# (.+)$/gm, '<div style="font-size:20px;font-weight:700;color:var(--accent);margin:24px 0 16px;">$1</div>')
+        .replace(/\*\*(.+?)\*\*/g, '<strong style="color:var(--text-primary);font-weight:700;">$1</strong>')
+        .replace(/`([^`]+)`/g, '<code style="background:var(--bg-tertiary);padding:2px 6px;border-radius:4px;font-size:11px;">$1</code>');
+      contentEl.innerHTML = html;
+    } else {
+      contentEl.innerHTML = '<pre style="white-space:pre-wrap;word-wrap:break-word;">' + content.replace(/</g, '&lt;').replace(/>/g, '&gt;') + '</pre>';
+    }
+  } catch (e) {
+    contentEl.innerHTML = '<div style="color:var(--red);">Failed to load file</div>';
+  }
+};
+
+window.editKeyFile = function() {
+  if (!currentKeyFile) return;
+  keyFileEditing = true;
+  const contentEl = document.getElementById('keyFileContent');
+  const editorEl = document.getElementById('keyFileEditor');
+  const editBtn = document.getElementById('keyFileEditBtn');
+  const saveBtn = document.getElementById('keyFileSaveBtn');
+  const cancelBtn = document.getElementById('keyFileCancelBtn');
+
+  editorEl.value = _currentKeyFileRaw;
+  contentEl.style.display = 'none';
+  editorEl.style.display = 'block';
+  editBtn.style.display = 'none';
+  saveBtn.style.display = 'inline-block';
+  cancelBtn.style.display = 'inline-block';
+  editorEl.focus();
+};
+
+window.cancelEditKeyFile = function() {
+  keyFileEditing = false;
+  const contentEl = document.getElementById('keyFileContent');
+  const editorEl = document.getElementById('keyFileEditor');
+  const editBtn = document.getElementById('keyFileEditBtn');
+  const saveBtn = document.getElementById('keyFileSaveBtn');
+  const cancelBtn = document.getElementById('keyFileCancelBtn');
+
+  contentEl.style.display = 'block';
+  editorEl.style.display = 'none';
+  editBtn.style.display = 'inline-block';
+  saveBtn.style.display = 'none';
+  cancelBtn.style.display = 'none';
+};
+
+window.saveKeyFile = async function() {
+  if (!currentKeyFile) return;
+  const editorEl = document.getElementById('keyFileEditor');
+  const saveBtn = document.getElementById('keyFileSaveBtn');
+  const content = editorEl.value;
+
+  saveBtn.textContent = 'Saving…';
+  saveBtn.disabled = true;
+
+  try {
+    const res = await authFetch(API_BASE + '/api/key-file', {
+      method: 'POST',
+      headers: { 'Content-Type': 'application/json' },
+      body: JSON.stringify({ path: currentKeyFile, content })
+    });
+    const data = await res.json();
+    if (!res.ok || !data.success) throw new Error(data.error || 'Save failed');
+
+    saveBtn.textContent = 'Saved!';
+    setTimeout(() => {
+      saveBtn.textContent = 'Save';
+      saveBtn.disabled = false;
+    }, 1200);
+    window.cancelEditKeyFile();
+    await window.loadKeyFile(currentKeyFile);
+  } catch (e) {
+    saveBtn.textContent = 'Save';
+    saveBtn.disabled = false;
+    const contentEl = document.getElementById('keyFileContent');
+    const errDiv = document.createElement('div');
+    errDiv.style.cssText = 'color:var(--red);font-size:12px;margin-top:8px;';
+    errDiv.textContent = 'Error: ' + e.message;
+    contentEl.parentNode.appendChild(errDiv);
+    setTimeout(() => errDiv.remove(), 4000);
   }
 };
 
@@ -3259,10 +4531,15 @@ function sendNotification(title, body) {
 
 // Feed search
 let feedSearchTerm = '';
-document.getElementById('feedSearchInput')?.addEventListener('input', (e) => {
-  feedSearchTerm = e.target.value.toLowerCase();
-  applyFeedFilter();
-});
+{
+  const feedSearchInputEl = document.getElementById('feedSearchInput');
+  if (feedSearchInputEl) {
+    feedSearchInputEl.addEventListener('input', (e) => {
+      feedSearchTerm = e.target.value.toLowerCase();
+      applyFeedFilter();
+    });
+  }
+}
 
 function clearFeedSearch() {
   document.getElementById('feedSearchInput').value = '';
@@ -3376,21 +4653,6 @@ function renderDiskSparkline(history) {
 const origUpdateOverview = updateOverview;
 const _origUpdateOverview = updateOverview;
 
-fetchData();
-fetchNewData();
-fetchHealthHistory();
-fetchMemoryFiles();
-
-// Restore auto-refresh state
-if (localStorage.getItem('usageAutoRefresh') === '1') {
-  const cb = document.getElementById('usageAutoRefresh');
-  if (cb) { cb.checked = true; toggleUsageAutoRefresh(true, true); }
-}
-setInterval(fetchData, 5000);
-setInterval(fetchNewData, 15000);
-setInterval(fetchHealthHistory, 60000);
-setInterval(fetchMemoryFiles, 30000);
-
 function openSessionDetail(key) {
   const s = sessions.find(x => x.key === key);
   if (!s) return;
@@ -3408,7 +4670,7 @@ function openSessionDetail(key) {
     <div><div style="font-size:11px;color:var(--text-muted);text-transform:uppercase;margin-bottom:4px;">Channel</div><div style="font-size:13px;">${s.channel || '--'}</div></div>`;
   document.getElementById('modalMessages').innerHTML = '<div style="color:var(--text-muted);font-size:13px;">Loading...</div>';
   document.getElementById('sessionModal').style.display = 'flex';
-  fetch('/api/session-messages?id=' + encodeURIComponent(s.sessionId || s.key))
+  authFetch(API_BASE + '/api/session-messages?id=' + encodeURIComponent(s.sessionId || s.key))
     .then(r => r.json())
     .then(msgs => {
       document.getElementById('modalMessages').innerHTML = msgs.map(m => {
@@ -3485,12 +4747,13 @@ async function quickAction(action, evt) {
     'restart-claude': '🤖 Restarting...'
   };
 
-  const triggerBtn = evt?.target?.closest?.('.qa-btn') || evt?.target;
-  const origText = triggerBtn?.textContent || '';
+  const evtTarget = evt && evt.target ? evt.target : null;
+  const triggerBtn = (evtTarget && typeof evtTarget.closest === 'function' ? evtTarget.closest('.qa-btn') : null) || evtTarget;
+  const origText = triggerBtn && triggerBtn.textContent ? triggerBtn.textContent : '';
   if (triggerBtn) { triggerBtn.textContent = loadingLabels[action] || '⏳ Working...'; triggerBtn.disabled = true; triggerBtn.style.opacity = '0.6'; triggerBtn.style.pointerEvents = 'none'; }
 
   try {
-    const res = await fetch(`/api/action/${action}`, { method: 'POST' });
+    const res = await authFetch(`/api/action/${action}`, { method: 'POST' });
     const data = await res.json();
     
     if (data.success) {
@@ -3514,7 +4777,7 @@ async function quickAction(action, evt) {
 // Tailscale Status
 async function fetchTailscaleStatus() {
   try {
-    const res = await fetch('/api/tailscale');
+    const res = await authFetch(API_BASE + '/api/tailscale');
     const data = await res.json();
     
     const statusEl = document.getElementById('tailscaleStatus');
@@ -3566,7 +4829,7 @@ async function fetchTailscaleStatus() {
 // Lifetime Stats
 async function fetchLifetimeStats() {
   try {
-    const res = await fetch('/api/lifetime-stats');
+    const res = await authFetch(API_BASE + '/api/lifetime-stats');
     const data = await res.json();
     
     document.getElementById('ltTokens').textContent = data.totalTokens >= 1000000 ? (data.totalTokens / 1000000).toFixed(1) + 'M' : data.totalTokens >= 1000 ? (data.totalTokens / 1000).toFixed(0) + 'k' : data.totalTokens;
@@ -3660,12 +4923,20 @@ async function fetchLogs() {
   const service = document.getElementById('logService').value;
   const lines = document.getElementById('logLines').value;
   const viewer = document.getElementById('logViewer');
-  
+
   if (!viewer) return;
   viewer.innerHTML = '<div style="color:var(--text-muted);">Loading logs...</div>';
-  
+
   try {
-    const res = await fetch(`/api/logs?service=${service}&lines=${lines}`);
+    const token = getStoredToken();
+    const res = await fetch(`/api/logs?service=${service}&lines=${lines}`, {
+      headers: { 'Authorization': `Bearer ${token}` }
+    });
+
+    if (!res.ok) {
+      throw new Error(`HTTP ${res.status}: ${res.statusText}`);
+    }
+
     const logs = await res.text();
     viewer.textContent = logs;
     viewer.scrollTop = viewer.scrollHeight;
