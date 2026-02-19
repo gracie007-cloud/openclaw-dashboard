@@ -27,7 +27,9 @@ const configFiles = [
 ];
 const workspaceFilenames = ['AGENTS.md','HEARTBEAT.md','IDENTITY.md','MEMORY.md','SOUL.md','TOOLS.md','USER.md'];
 const claudeUsageFile = path.join(dataDir, 'claude-usage.json');
+const geminiUsageFile = path.join(dataDir, 'gemini-usage.json');
 const scrapeScript = path.join(WORKSPACE_DIR, 'scripts', 'scrape-claude-usage.sh');
+const geminiScrapeScript = path.join(WORKSPACE_DIR, 'scripts', 'scrape-gemini-usage.sh');
 
 const htmlPath = path.join(__dirname, 'index.html');
 
@@ -391,6 +393,9 @@ function getLastMessage(sessionId) {
   } catch { return ''; }
 }
 
+function isSessionFile(f) { return f.endsWith('.jsonl') || f.includes('.jsonl.reset.'); }
+function extractSessionId(f) { return f.replace(/\.jsonl(?:\.reset\.\d+)?$/, ''); }
+
 let sessionCostCache = {};
 let sessionCostCacheTime = 0;
 
@@ -400,9 +405,9 @@ function getSessionCost(sessionId) {
     sessionCostCache = {};
     sessionCostCacheTime = now;
     try {
-      const files = fs.readdirSync(sessDir).filter(f => f.endsWith('.jsonl'));
+      const files = fs.readdirSync(sessDir).filter(f => isSessionFile(f));
       for (const file of files) {
-        const sid = file.replace('.jsonl', '');
+        const sid = extractSessionId(file);
         let total = 0;
         const lines = fs.readFileSync(path.join(sessDir, file), 'utf8').split('\n');
         for (const line of lines) {
@@ -446,14 +451,14 @@ function getSessionsJson() {
 
 function getCostData() {
   try {
-    const files = fs.readdirSync(sessDir).filter(f => f.endsWith('.jsonl'));
+    const files = fs.readdirSync(sessDir).filter(f => isSessionFile(f));
     const perModel = {};
     const perDay = {};
     const perSession = {};
     let total = 0;
 
     for (const file of files) {
-      const sid = file.replace('.jsonl', '');
+      const sid = extractSessionId(file);
       let scost = 0;
       const lines = fs.readFileSync(path.join(sessDir, file), 'utf8').split('\n');
       for (const line of lines) {
@@ -694,7 +699,7 @@ function getUsageWindows() {
 
 function getRateLimitEvents() {
   try {
-    const files = fs.readdirSync(sessDir).filter(f => f.endsWith('.jsonl'));
+    const files = fs.readdirSync(sessDir).filter(f => isSessionFile(f));
     const events = [];
     const now = Date.now();
     const fiveHoursMs = 5 * 3600000;
@@ -892,9 +897,9 @@ function watchSessionFile(file) {
 function startLiveWatcher() {
   if (liveWatcher) return;
   try {
-    fs.readdirSync(sessDir).filter(f => f.endsWith('.jsonl')).forEach(watchSessionFile);
+    fs.readdirSync(sessDir).filter(f => isSessionFile(f)).forEach(watchSessionFile);
     liveWatcher = fs.watch(sessDir, (eventType, filename) => {
-      if (filename && filename.endsWith('.jsonl') && !_fileWatchers[filename]) {
+      if (filename && isSessionFile(filename) && !_fileWatchers[filename]) {
         try { if (fs.existsSync(path.join(sessDir, filename))) watchSessionFile(filename); } catch {}
       }
     });
@@ -1181,7 +1186,7 @@ function buildKeyFilesAllowed() {
 
 function getTodayTokens() {
   try {
-    const files = fs.readdirSync(sessDir).filter(f => f.endsWith('.jsonl'));
+    const files = fs.readdirSync(sessDir).filter(f => isSessionFile(f));
     const now = new Date();
     const todayStr = now.toISOString().substring(0, 10);
     const perModel = {};
@@ -1216,7 +1221,7 @@ function getTodayTokens() {
 
 function getAvgResponseTime() {
   try {
-    const files = fs.readdirSync(sessDir).filter(f => f.endsWith('.jsonl'));
+    const files = fs.readdirSync(sessDir).filter(f => isSessionFile(f));
     const now = new Date();
     const todayStr = now.toISOString().substring(0, 10);
     const diffs = [];
@@ -1726,7 +1731,7 @@ const server = http.createServer((req, res) => {
       const sessionId = rawId.replace(/[^a-zA-Z0-9\-_:.]/g, '');
       const messages = [];
       try {
-        const files = fs.readdirSync(sessDir).filter(f => f.endsWith('.jsonl'));
+        const files = fs.readdirSync(sessDir).filter(f => isSessionFile(f));
         let targetFile = files.find(f => f.includes(sessionId));
         if (!targetFile) {
           const sFile = path.join(sessDir, 'sessions.json');
@@ -1810,6 +1815,26 @@ const server = http.createServer((req, res) => {
         res.end(JSON.stringify(data));
       } catch {
         res.end(JSON.stringify({ error: 'No usage data. Run scrape-claude-usage.sh first.' }));
+      }
+      return;
+    }
+    if (req.url === '/api/gemini-usage-scrape' && req.method === 'POST') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      if (fs.existsSync(geminiScrapeScript)) {
+        exec(`bash ${geminiScrapeScript}`, { timeout: 60000 }, (err) => {});
+        res.end(JSON.stringify({ status: 'started' }));
+      } else {
+        res.end(JSON.stringify({ status: 'error', message: 'Gemini scrape script not found' }));
+      }
+      return;
+    }
+    if (req.url === '/api/gemini-usage') {
+      res.writeHead(200, { 'Content-Type': 'application/json' });
+      try {
+        const data = JSON.parse(fs.readFileSync(geminiUsageFile, 'utf8'));
+        res.end(JSON.stringify(data));
+      } catch {
+        res.end(JSON.stringify({ error: 'No usage data. Run scrape-gemini-usage.sh first.' }));
       }
       return;
     }
@@ -1981,7 +2006,7 @@ const server = http.createServer((req, res) => {
           res.end(JSON.stringify(global[cacheKey]));
           return;
         }
-        const files = fs.readdirSync(sessDir).filter(f => f.endsWith('.jsonl'));
+        const files = fs.readdirSync(sessDir).filter(f => isSessionFile(f));
         let totalTokens = 0, totalMessages = 0, totalCost = 0, totalSessions = files.length;
         let firstSessionDate = null;
         const activeDays = new Set();
